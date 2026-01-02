@@ -2852,14 +2852,20 @@ function Luna:CreateWindow(WindowSettings)
 					end
 				end)
 
-				Button["MouseEnter"]:Connect(function()
+				local conn1 = Button["MouseEnter"]:Connect(function()
+					if not Button.Parent then return end
 					ButtonV.Hover = true
-					tween(Button.UIStroke, {Color = Color3.fromRGB(87, 84, 104)})
+					if Button:FindFirstChild("UIStroke") then
+						tween(Button.UIStroke, {Color = Color3.fromRGB(87, 84, 104)})
+					end
 				end)
 
-				Button["MouseLeave"]:Connect(function()
+				local conn2 = Button["MouseLeave"]:Connect(function()
+					if not Button.Parent then return end
 					ButtonV.Hover = false
-					tween(Button.UIStroke, {Color = Color3.fromRGB(64,61,76)})
+					if Button:FindFirstChild("UIStroke") then
+						tween(Button.UIStroke, {Color = Color3.fromRGB(64,61,76)})
+					end
 				end)
 
 				function ButtonV:Set(ButtonSettings2)
@@ -2880,7 +2886,10 @@ function Luna:CreateWindow(WindowSettings)
 				end
 
 				function ButtonV:Destroy()
+					ButtonV.Hover = false
 					Button.Visible = false
+					pcall(function() conn1:Disconnect() end)
+					pcall(function() conn2:Disconnect() end)
 					Button:Destroy()
 				end
 
@@ -6707,7 +6716,6 @@ function Luna:CreateWindow(WindowSettings)
 	Main.Controls.Theme["MouseLeave"]:Connect(function()
 		tween(Main.Controls.Theme.ImageLabel, {ImageColor3 = Color3.fromRGB(195,195,195)})
 	end)	
-
 
 	LunaUI.MobileSupport.Interact.MouseButton1Click:Connect(function()
 		Unhide(Main, Window.CurrentTab)
