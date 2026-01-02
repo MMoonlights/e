@@ -1589,7 +1589,7 @@ end
 
 local function PackColor(Color)
 	return {R = Color.R * 255, G = Color.G * 255, B = Color.B * 255}
-end    
+end
 
 local function UnpackColor(Color)
 	return Color3.fromRGB(Color.R, Color.G, Color.B)
@@ -1844,7 +1844,10 @@ local function Hide(Window, bind, notif)
 	for _, TopbarButton in ipairs(Window.Controls:GetChildren()) do
 		if TopbarButton.ClassName == "Frame" then
 			tween(TopbarButton, {BackgroundTransparency = 1})
-			tween(TopbarButton.UIStroke, {Transparency = 1})
+			local _stroke = TopbarButton:FindFirstChild("UIStroke")
+			if _stroke then
+				tween(_stroke, {Transparency = 1})
+			end
 			tween(TopbarButton.ImageLabel, {ImageTransparency = 1})
 			TopbarButton.Visible = false
 		end
@@ -1854,7 +1857,12 @@ local function Hide(Window, bind, notif)
 			TweenService:Create(tabbtn, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
 			TweenService:Create(tabbtn.ImageLabel, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
 			TweenService:Create(tabbtn.DropShadowHolder.DropShadow, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
-			TweenService:Create(tabbtn.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
+			local _stroke = tabbtn:FindFirstChild("UIStroke")
+			if _stroke then
+				pcall(function()
+					TweenService:Create(_stroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
+				end)
+			end
 		end
 	end
 
