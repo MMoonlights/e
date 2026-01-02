@@ -47,13 +47,13 @@ AimTab:CreateButton({
 EspTab:CreateButton({
   Name = "ESP",
   Callback = function()
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/ewre7q/espbasic/refs/heads/main/main"))()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/MMoonlights/e/refs/heads/main/Criminality/Esp/Esp.lua"))()
   end,
 })
 
 ModsTab:CreateButton({
   Name = "No Recoil",
   Callback = function()
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/ewre7q/norecoilhardcrim/refs/heads/main/beta"))()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/MMoonlights/e/refs/heads/main/Criminality/Utility/No%20Recoil.lua"))()
   end,
 })
