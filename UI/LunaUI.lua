@@ -1596,9 +1596,21 @@ local function UnpackColor(Color)
 end
 
 function tween(object, goal, callback, tweenin)
-	local tween = TweenService:Create(object,tweenin or tweeninfo, goal)
-	tween.Completed:Connect(callback or function() end)
-	tween:Play()
+	if object == nil then return end
+	if typeof(object) ~= "Instance" then return end
+	if object.Parent == nil then return end
+
+	local ok, tw = pcall(function()
+		return TweenService:Create(object, tweenin or tweeninfo, goal)
+	end)
+	if not ok or tw == nil then return end
+
+	pcall(function()
+		tw.Completed:Connect(callback or function() end)
+	end)
+	pcall(function()
+		tw:Play()
+	end)
 end
 
 local function BlurModule(Frame)
