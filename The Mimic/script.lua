@@ -1,3 +1,48 @@
+------------- CREDITS -------------
+
+--[[
+     _      ___         ____  ______
+    | | /| / (_)__  ___/ / / / /  _/
+    | |/ |/ / / _ \/ _  / /_/ // /  
+    |__/|__/_/_//_/\_,_/\____/___/
+    
+    v1.6.62  |  2025-12-09  |  Roblox UI Library for scripts
+    
+    To view the source code, see the `src/` folder on the official GitHub repository.
+    
+    Author: Footagesus ( Footages, .ftgs, oftgs )
+    Github: https://github.com/Footagesus/WindUI
+    Discord: https://discord.gg/ftgs-development-hub-1300692552005189632
+    License: MIT
+
+     __      ___    _ _      _   ___   __ 
+     \ \    / / |  | | |    | \ | \ \ / /
+      \ \  / /| |  | | |    |  \| |\ V / 
+       \ \/ / | |  | | |    | . ` | > <  
+        \  /  | |__| | |____| |\  |/ . \ 
+         \/    \____/|______|_| \_/_/ \_\
+
+    v2.1.03  |  2025-12-10  |  Roblox Script
+    
+    Author: VULNX TEAM ( Ironic, TTJY, Datey, 7thSenz )
+    Github: https://github.com/Yumiara/SSL-VulnX
+    Discord: https://discord.gg/sCCQUp3hHc
+    License: ND
+
+     _____ ____  
+     |_   _|  _ \ 
+       | | | |_) |
+       | | |  _ < 
+      _| |_| |_) |
+     |_____|____/ 
+              
+    v1  |  2025-07-06  | Code Obfuscator & Optimizer
+    
+    Author: dr_breen
+    Github: https://github.com/7Duser/ironbrew1
+    License: ND
+]]
+
 ------------- Game Load -------------
 
 if not game:IsLoaded() then
@@ -22,6 +67,8 @@ end;
 
 if LSecureLoad and LSecureUI and Functions then 
     return LSecureLoad();
+elseif InKey then
+    return InKey();
 end;
 
 if ReplicatedFirst_lc and API_Only then return warn("[VULNX] : Loaded Main.lua via execution"); end;
@@ -1081,7 +1128,6 @@ AssetStorage.Wind = function(...): {[string]:(any)->(...any)}?
     return Windy;
 end;
 AssetStorage.Key = function(): nil
-    return; -- disable key UI
     GG.UploadToGlobal_Key = GG.UploadToGlobal_Key or function( arg : {} )
         local emptyfunction = function(...) return; end;
         local modules : {} = {};
@@ -1734,7 +1780,7 @@ AssetStorage.Key = function(): nil
                 Destroy(G2L["1"]);
                 G2L["1"] = nil;
                 G2L = nil;
-                return;
+                return setc("https://pandadevelopment.net/getkey?service=vulx&hwid="..gethwid());
             end);
         
             return G2L;
