@@ -22,8 +22,6 @@ end;
 
 if LSecureLoad and LSecureUI and Functions then 
     return LSecureLoad();
-elseif InKey then
-    return InKey();
 end;
 
 if ReplicatedFirst_lc and API_Only then return warn("[VULNX] : Loaded Main.lua via execution"); end;
@@ -1083,6 +1081,7 @@ AssetStorage.Wind = function(...): {[string]:(any)->(...any)}?
     return Windy;
 end;
 AssetStorage.Key = function(): nil
+    return; -- disable key UI
     GG.UploadToGlobal_Key = GG.UploadToGlobal_Key or function( arg : {} )
         local emptyfunction = function(...) return; end;
         local modules : {} = {};
@@ -1735,7 +1734,7 @@ AssetStorage.Key = function(): nil
                 Destroy(G2L["1"]);
                 G2L["1"] = nil;
                 G2L = nil;
-                return setc("https://pandadevelopment.net/getkey?service=vulx&hwid="..gethwid());
+                return;
             end);
         
             return G2L;
