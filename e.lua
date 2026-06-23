@@ -6,6 +6,7 @@ local GuiService = game:GetService("GuiService")
 local localPlayer = Players.LocalPlayer
 local VirtualInputManager = game:GetService("VirtualInputManager")
 
+-- AFK Anti-kick
 local afkConnection = game:GetService("Players").LocalPlayer.Idled:Connect(function()
     VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
     task.wait(1)
@@ -95,7 +96,53 @@ local AREAS = {
     { name = "Port", getPath = function() return workspace.FastTravel.Locations.Port.Part end },
 }
 
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+-- ==================== ИСПРАВЛЕНИЕ: Загрузка Rayfield с проверками ====================
+local Rayfield
+local success, err = pcall(function()
+    Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+end)
+
+if not success or not Rayfield then
+    -- Пробуем альтернативные ссылки
+    success, err = pcall(function()
+        Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/shlexware/Rayfield/main/source'))()
+    end)
+end
+
+if not success or not Rayfield then
+    -- Еще одна альтернатива
+    success, err = pcall(function()
+        Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
+    end)
+end
+
+if not success or not Rayfield then
+    warn("Failed to load Rayfield UI library. Error: " .. tostring(err))
+    -- Создаем заглушку чтобы скрипт не крашился
+    Rayfield = {
+        CreateWindow = function() return {
+            CreateTab = function() return {
+                CreateParagraph = function() return {Set = function() end} end,
+                CreateInput = function() end,
+                CreateToggle = function() end,
+                CreateDropdown = function() return {Refresh = function() end} end,
+                CreateButton = function() end,
+                CreateSection = function() end,
+            } end,
+            Destroy = function() end,
+        } end
+    }
+    -- Показываем уведомление в чате
+    local starterGui = game:GetService("StarterGui")
+    pcall(function()
+        starterGui:SetCore("SendNotification", {
+            Title = "Car Flipper Error",
+            Text = "Failed to load Rayfield UI. Check your executor/internet.",
+            Duration = 10
+        })
+    end)
+end
+
 local Window = Rayfield:CreateWindow({
     Name = "🚗 Car Flipper 🚗",
     LoadingTitle = "🚗 Car Flipper 🚗",
@@ -154,6 +201,25 @@ local function safeTeleport(hrp, position)
     task.wait(0.6)
 end
 
+-- ==================== ИСПРАВЛЕНИЕ: Защищенные клики мышью ====================
+local function safeMouseClick(element)
+    if not element then return end
+    local pos = element.AbsolutePosition
+    local size = element.AbsoluteSize
+    local cx = pos.X + size.X / 2
+    local cy = pos.Y + size.Y / 2 + INSET_Y
+    
+    -- Используем VirtualInputManager вместо устаревших функций
+    pcall(function()
+        VirtualInputManager:SendMouseMoveEvent(cx, cy, game)
+        task.wait(0.1)
+        VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 1)
+        task.wait(0.05)
+        VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 1)
+    end)
+    task.wait(1.2)
+end
+
 local function forceOpenGarage()
     local garageBtn = localPlayer.PlayerGui:FindFirstChild("RuntimeGui")
     if not garageBtn then return end
@@ -161,39 +227,12 @@ local function forceOpenGarage()
     if not sidebar then return end
     local btn = sidebar:FindFirstChild("Garage")
     if not btn then return end
-
-    local pos  = btn.AbsolutePosition
-    local size = btn.AbsoluteSize
-    local cx = pos.X + size.X / 2
-    local cy = pos.Y + size.Y / 2 + INSET_Y
-
-    mousemoveabs(cx, cy - 20)
-    task.wait(0.08)
-    mousemoveabs(cx, cy + 6)
-    task.wait(0.08)
-    mouse1click()
-    task.wait(1.2)
+    safeMouseClick(btn)
 end
 
 local function forceCloseGarage()
-    local garageBtn = localPlayer.PlayerGui:FindFirstChild("RuntimeGui")
-    if not garageBtn then return end
-    local sidebar = garageBtn:FindFirstChild("SideBar")
-    if not sidebar then return end
-    local btn = sidebar:FindFirstChild("Garage")
-    if not btn then return end
-
-    local pos  = btn.AbsolutePosition
-    local size = btn.AbsoluteSize
-    local cx = pos.X + size.X / 2
-    local cy = pos.Y + size.Y / 2 + INSET_Y
-
-    mousemoveabs(cx, cy - 20)
-    task.wait(0.08)
-    mousemoveabs(cx, cy + 6)
-    task.wait(0.08)
-    mouse1click()
-    task.wait(1.2)
+    -- Аналогично forceOpenGarage, если кнопка та же
+    forceOpenGarage()
 end
 
 local function findNewestCarIndex()
@@ -637,4 +676,4 @@ SettingsTab:CreateButton({
         afkConnection:Disconnect()
         Rayfield:Destroy()
     end
-end)
+})
