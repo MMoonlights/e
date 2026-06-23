@@ -4,12 +4,12 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 local GuiService = game:GetService("GuiService")
 local localPlayer = Players.LocalPlayer
-local VirtualUser = game:GetService("VirtualUser")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local afkConnection = game:GetService("Players").LocalPlayer.Idled:Connect(function()
-    VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
     task.wait(1)
-    VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
 end)
 
 local guiInset = GuiService:GetGuiInset()
@@ -637,4 +637,4 @@ SettingsTab:CreateButton({
         afkConnection:Disconnect()
         Rayfield:Destroy()
     end
-})
+end)
