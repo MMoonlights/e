@@ -27,6 +27,24 @@ if getgenv then
     getgenv().vLnware_DEMO = true
 end
 local BUILD_NAME = "Demonology v5.9"
+local DISABLE_TELEPORT_QUEUE = false
+local DISCORD_INVITE = "https://discord.gg/s3wc8JPzc7"
+local FEATURES = {
+    "Auto-detect evidence + Ghost ESP",
+    "Hunt alert, haunt warning & auto-escape",
+    "Auto Spirit Box, lights & fuse",
+}
+local CHANGELOG = {
+    {
+        v = "v5.9",
+        ["notes"] = {
+            "More accurate ghost detection (Specter fixed)",
+            "Steadier type tells — fewer false reads from lag",
+            "Fixed: Auto fuse box now powers ON (not just opens it)",
+        },
+    },
+}
+
 local scriptKey = script_key or (getgenv and getgenv().script_key)
 if (type(scriptKey) ~= "string") or (scriptKey == "") then
     scriptKey = nil
@@ -44,7 +62,7 @@ if scriptKey then
         end
     end)
 end
--- Remote loader requeue intentionally removed to prevent server-side execution logging.
+
 local OBSIDIAN_BASE_URL = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
 local CACHE_FOLDER = "vLnware/cache"
 local function hasFileApi()
@@ -154,8 +172,7 @@ local function clearLoadedFlag()
         getgenv().vLnware_DEMO = nil
     end
 end
-local function -- No client execution telemetry is sent by this build.
-runMainSafely()
+local function runMainSafely()
     local mainSucceeded
     local mainError
     mainSucceeded, mainError = pcall(main)
