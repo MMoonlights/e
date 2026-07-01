@@ -44,7 +44,7 @@ local CHANGELOG = {
         },
     },
 }
--- Client execution telemetry removed.
+
 local scriptKey = script_key or (getgenv and getgenv().script_key)
 if (type(scriptKey) ~= "string") or (scriptKey == "") then
     scriptKey = nil
@@ -62,7 +62,7 @@ if scriptKey then
         end
     end)
 end
--- Original remote loader requeue removed to prevent server-side execution logging.
+
 local OBSIDIAN_BASE_URL = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
 local CACHE_FOLDER = "vLnware/cache"
 local function hasFileApi()
@@ -214,7 +214,7 @@ local function runMainSafely()
     end
 end
 function main()
-    -- Keep UI handles in one table so Luau does not exhaust the 200 local-register limit.
+    
     local UI = {}
     local Players = game:GetService("Players")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -547,6 +547,16 @@ function main()
         return ((type(optionValueResult) == "table") and optionValueResult) or {
         }
     end
+    function UI.safeGetAttribute(instance, attributeName)
+        if typeof(instance) ~= "Instance" then
+            return nil
+        end
+        local ok, value = pcall(instance.GetAttribute, instance, attributeName)
+        if ok then
+            return value
+        end
+        return nil
+    end
     local function getCharacter()
         return LocalPlayer.Character
     end
@@ -723,6 +733,9 @@ function main()
         registerKnownItemName(item_787)
     end
     local function identifyItem(instance_200)
+        if typeof(instance_200) ~= "Instance" then
+            return nil
+        end
         local explicitItemName
         local canonicalName
         local itemCategory
@@ -757,7 +770,15 @@ function main()
         local itemSearchRoots
         local mapModel_211
         if cachedItems and ((tick() - cachedItemsAt) < 0.3) then
-            return cachedItems
+            local validCachedItems = {}
+            for _, cachedEntry in ipairs(cachedItems) do
+                local cachedInstance = (type(cachedEntry) == "table") and cachedEntry.inst or nil
+                if typeof(cachedInstance) == "Instance" and cachedInstance.Parent and cachedInstance:IsDescendantOf(workspace) then
+                    validCachedItems[#validCachedItems + 1] = cachedEntry
+                end
+            end
+            cachedItems = validCachedItems
+            return validCachedItems
         end
         foundItems, seenInstances = {
         }, {
@@ -766,6 +787,9 @@ function main()
         function addScannedItem(arg_793, arg_794)
             local value_796
             local value_797
+            if typeof(arg_793) ~= "Instance" then
+                return
+            end
             if seenInstances[arg_793] or not arg_793:IsDescendantOf(workspace) then
                 return 
             end
@@ -1280,7 +1304,7 @@ function main()
                 value_1347 = #value_1020 <= 8
                 value_1348 = {
                 }
-                -- Complete ghost-tells loop (kept intact; this section must not be truncated).
+                
                 for index_1526, item_1527 in ipairs(value_1020) do
                     if GHOST_TRAITS[item_1527] then
                         local value_1565
@@ -1447,7 +1471,7 @@ function main()
                 end
                 if value_1181 then
                     for index_1494, item_1495 in ipairs(scanItems()) do
-                        if (item_1495.name == "Flashlight") and (item_1495.inst:GetAttribute("Enabled") == true) then
+                        if (item_1495.name == "Flashlight") and (UI.safeGetAttribute(item_1495 and item_1495.inst, "Enabled") == true) then
                             markGhostTell("Ghoul")
                             break
                         end
@@ -1468,7 +1492,7 @@ function main()
                     previousRoomName = value_1185
                 end
                 local value_1423
-                value_1423 = value_1180:GetAttribute("CameraKillOffset")
+                value_1423 = UI.safeGetAttribute(value_1180, "CameraKillOffset")
                 if (type(value_1423) == "number") and (value_1423 >= 3) then
                     markGhostTell("Ravager")
                 end
@@ -2290,7 +2314,7 @@ function main()
                 for index_1536, item_1537 in ipairs(scanItems()) do
                     if item_1537.name == "EMF Reader" then
                         local value_1572
-                        value_1572 = item_1537.inst:GetAttribute("ReadingLevel")
+                        value_1572 = UI.safeGetAttribute(item_1537 and item_1537.inst, "ReadingLevel")
                         if (type(value_1572) == "number") and (value_1572 > value_1363) then
                             value_1363 = value_1572
                         end
@@ -2801,13 +2825,13 @@ function main()
                         value_1380 = "item_" .. number_718
                         table_716[value_1380] = true
                         value_1381 = (value_813 and option_default_720) or option_default_719
-                        if (item_812.name == "Cross") and (item_812.inst:GetAttribute("Burned") == true) then
+                        if (item_812.name == "Cross") and (UI.safeGetAttribute(item_812 and item_812.inst, "Burned") == true) then
                             value_1381 = Color3.fromRGB(125, 125, 125)
                         end
                         setHighlight(value_1380, item_812.inst, value_1381, 0.5)
                         value_1382 = item_812.name
                         if item_812.name == "Cross" then
-                            value_1382 = ((item_812.inst:GetAttribute("Burned") == true) and "Cross (BURNT)") or "Cross (active)"
+                            value_1382 = ((UI.safeGetAttribute(item_812 and item_812.inst, "Burned") == true) and "Cross (BURNT)") or "Cross (active)"
                         end
                         if appendDistance and localRootPart then
                             value_1382 = value_1382 .. ("  %dm"):format(math.floor((value_1047.Position - localRootPart.Position).Magnitude))
@@ -2960,7 +2984,7 @@ function main()
             local placementCandidates = {
             }
             for index_726, item_727 in ipairs(scanItems()) do
-                local current_room_728 = item_727.inst:GetAttribute("CurrentRoom")
+                local current_room_728 = UI.safeGetAttribute(item_727 and item_727.inst, "CurrentRoom")
                 if bringableItems[item_727.name] and (not current_room_728 or (current_room_728 == "Base Camp")) then
                     placementCandidates[#placementCandidates + 1 + 0] = item_727
                 end
@@ -3041,7 +3065,7 @@ function main()
                     task.wait(0.25)
                     if toggleEnabled("IT_PlaceActive") and activatableItems[item_828.name] then
                         for index_1137 = 1, 3 do
-                            if item_828.inst:GetAttribute("Enabled") == true then
+                            if UI.safeGetAttribute(item_828 and item_828.inst, "Enabled") == true then
                                 break
                             end
                             fireEvent("ToggleItemState", item_828.inst)
@@ -3100,7 +3124,7 @@ function main()
             if toggleEnabled("IT_CrossAlert") then
                 for index_1391, item_1392 in ipairs(scanItems()) do
                     if item_1392.name == "Cross" then
-                        if item_1392.inst:GetAttribute("Burned") == true then
+                        if UI.safeGetAttribute(item_1392 and item_1392.inst, "Burned") == true then
                             if not burnedCrosses[item_1392.inst] then
                                 burnedCrosses[item_1392.inst] = true
                                 notify("A Cross was just used (burned) — a hunt was prevented.", 5)
@@ -3511,23 +3535,23 @@ function main()
                 local value_842
                 local value_843
                 local value_844
-                value_842 = item_652.inst:GetAttribute("LocalTempModifier")
-                value_843 = item_652.inst:GetAttribute("CurrentRoom")
+                value_842 = UI.safeGetAttribute(item_652 and item_652.inst, "LocalTempModifier")
+                value_843 = UI.safeGetAttribute(item_652 and item_652.inst, "CurrentRoom")
                 value_844 = value_843 and roomsFolder_570 and roomsFolder_570:FindFirstChild(value_843) and roomsFolder_570:FindFirstChild(value_843):GetAttribute("Temperature")
                 if (type(value_842) == "number") and (type(value_844) == "number") and (value_844 ~= 0) and ((value_844 + value_842) <= freezingThreshold) then
                     markEvidenceDetected("Freezing Temperatures")
                 end
-            elseif (item_652.name == "EMF Reader") and (item_652.inst:GetAttribute("ReadingLevel") == 5) then
+            elseif (item_652.name == "EMF Reader") and (UI.safeGetAttribute(item_652 and item_652.inst, "ReadingLevel") == 5) then
                 markEvidenceDetected("EMF Level 5")
             elseif item_652.name == "Flower Pot" then
-                if item_652.inst:GetAttribute("PhotoRewardType") == "WitheredFlowers" then
+                if UI.safeGetAttribute(item_652 and item_652.inst, "PhotoRewardType") == "WitheredFlowers" then
                     markEvidenceDetected("Wither")
                 end
             elseif item_652.name == "Spirit Book" then
-                if item_652.inst:GetAttribute("PhotoRewardType") == "Inscription" then
+                if UI.safeGetAttribute(item_652 and item_652.inst, "PhotoRewardType") == "Inscription" then
                     markEvidenceDetected("Inscription")
                 else
-                    for index_1486, item_1487 in ipairs(item_652.inst:GetDescendants()) do
+                    for index_1486, item_1487 in ipairs((item_652 and typeof(item_652.inst) == "Instance" and item_652.inst:GetDescendants()) or {}) do
                         if item_1487:IsA("Decal") and (tostring(item_1487.Texture) ~= "") then
                             markEvidenceDetected("Inscription")
                             break
@@ -3580,7 +3604,7 @@ function main()
                 fireEvent("RequestItemEquip", value_1317)
                 task.wait(0.25)
                 for index_1400 = 1, 3 do
-                    if item_1231.inst:GetAttribute("Enabled") == true then
+                    if UI.safeGetAttribute(item_1231 and item_1231.inst, "Enabled") == true then
                         break
                     end
                     fireEvent("ToggleItemState", item_1231.inst)
@@ -3984,7 +4008,7 @@ function main()
                     if (item_979.name == "Spirit Book") or (item_979.name == "Flower Pot") then
                         local table_1147 = {
                         }
-                        for key_1242, value_1243 in pairs(item_979.inst:GetAttributes()) do
+                        for key_1242, value_1243 in pairs((item_979 and typeof(item_979.inst) == "Instance" and item_979.inst:GetAttributes()) or {}) do
                             table_1147[#table_1147 + 1 + 0] = key_1242 .. "=" .. tostring(value_1243)
                         end
                         appendScanLine(("  %s @ %s attrs={%s}"):format(item_979.name, item_979.inst:GetFullName(), table.concat(table_1147, ", ")))
@@ -4028,7 +4052,7 @@ function main()
                     local value_992
                     value_992 = {
                     }
-                    for key_1289, value_1290 in pairs(item_990.inst:GetAttributes()) do
+                    for key_1289, value_1290 in pairs((item_990 and typeof(item_990.inst) == "Instance" and item_990.inst:GetAttributes()) or {}) do
                         value_992[#value_992 + 1] = key_1289 .. "=" .. tostring(value_1290)
                     end
                     table.sort(value_992)
@@ -4063,7 +4087,7 @@ function main()
                 end
                 for index_877, item_878 in ipairs(scanItems()) do
                     if item_878.name == "Thermometer" then
-                        appendScanLine(("Thermometer: CurrentRoom=%s LocalTempModifier=%s"):format(tostring(item_878.inst:GetAttribute("CurrentRoom")), tostring(item_878.inst:GetAttribute("LocalTempModifier"))))
+                        appendScanLine(("Thermometer: CurrentRoom=%s LocalTempModifier=%s"):format(tostring(UI.safeGetAttribute(item_878 and item_878.inst, "CurrentRoom")), tostring(UI.safeGetAttribute(item_878 and item_878.inst, "LocalTempModifier"))))
                     end
                 end
                 appendScanLine("Tag examples:")
