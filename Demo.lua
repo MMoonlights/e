@@ -44,7 +44,7 @@ local CHANGELOG = {
         },
     },
 }
-
+-- Client execution telemetry removed.
 local scriptKey = script_key or (getgenv and getgenv().script_key)
 if (type(scriptKey) ~= "string") or (scriptKey == "") then
     scriptKey = nil
@@ -62,7 +62,7 @@ if scriptKey then
         end
     end)
 end
-
+-- Original remote loader requeue removed to prevent server-side execution logging.
 local OBSIDIAN_BASE_URL = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
 local CACHE_FOLDER = "vLnware/cache"
 local function hasFileApi()
@@ -71,16 +71,33 @@ end
 local function cacheFilename(relativePath)
     return CACHE_FOLDER .. "/" .. (relativePath:gsub("[/\\]", "_"))
 end
-local function executeSource(sourceCode)
+local function executeSource(sourceCode, sourceName)
     if (type(sourceCode) ~= "string") or (sourceCode == "") then
+        warn("[vLnware] Empty source: " .. tostring(sourceName or "unknown"))
         return nil
     end
-    local compiledChunk = loadstring(sourceCode)
+    local compiledChunk, compileError = loadstring(sourceCode)
     if type(compiledChunk) ~= "function" then
+        warn(("[vLnware] Compile error in %s: %s"):format(
+            tostring(sourceName or "unknown"),
+            tostring(compileError)
+        ))
         return nil
     end
-    local executionSucceeded, moduleResult = pcall(compiledChunk)
-    return (executionSucceeded and moduleResult) or nil
+    local executionSucceeded, moduleResult = xpcall(compiledChunk, function(runtimeError)
+        if debug and type(debug.traceback) == "function" then
+            return debug.traceback(tostring(runtimeError), 2)
+        end
+        return tostring(runtimeError)
+    end)
+    if not executionSucceeded then
+        warn(("[vLnware] Runtime error in %s:\n%s"):format(
+            tostring(sourceName or "unknown"),
+            tostring(moduleResult)
+        ))
+        return nil
+    end
+    return moduleResult
 end
 local function loadUiModule(modulePath)
     local cachePath
@@ -95,7 +112,7 @@ local function loadUiModule(modulePath)
         end)
         if cachedSource and (cachedSource ~= "") then
             local value_1006
-            value_1006 = executeSource(cachedSource)
+            value_1006 = executeSource(cachedSource, "cache:" .. modulePath)
             if value_1006 ~= nil then
                 return value_1006
             end
@@ -128,7 +145,7 @@ local function loadUiModule(modulePath)
             writefile(cachePath, downloadedSource)
         end)
     end
-    return executeSource(downloadedSource)
+    return executeSource(downloadedSource, "remote:" .. modulePath)
 end
 local function clearUiCache()
     if not hasFileApi() then
@@ -173,11 +190,19 @@ local function clearLoadedFlag()
     end
 end
 local function runMainSafely()
-    local mainSucceeded
-    local mainError
-    mainSucceeded, mainError = pcall(main)
+    if type(main) ~= "function" then
+        warn("[vLnware] Internal error: main is not a function")
+        clearLoadedFlag()
+        return
+    end
+    local mainSucceeded, mainError = xpcall(main, function(runtimeError)
+        if debug and type(debug.traceback) == "function" then
+            return debug.traceback(tostring(runtimeError), 2)
+        end
+        return tostring(runtimeError)
+    end)
     if not mainSucceeded then
-        warn("[vLnware] suite failed to load: " .. tostring(mainError))
+        warn("[vLnware] suite failed to load:\n" .. tostring(mainError))
         pcall(function()
             Library:Notify({
                 ["Title"] = "vLnware",
@@ -915,7 +940,7 @@ function main()
         if not roomModel_238 then
             local value_1154
             local value_1155
-            value_1154, value_1155 = nil
+            value_1154, value_1155 = nil, nil
             for index_1418, item_1419 in ipairs(roomsFolder_235:GetChildren()) do
                 local value_1421
                 value_1421 = item_1419:GetAttribute("Temperature")
@@ -1253,6 +1278,7 @@ function main()
                 value_1347 = #value_1020 <= 8
                 value_1348 = {
                 }
+                -- Complete ghost-tells loop (kept intact; this section must not be truncated).
                 for index_1526, item_1527 in ipairs(value_1020) do
                     if GHOST_TRAITS[item_1527] then
                         local value_1565
