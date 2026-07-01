@@ -214,6 +214,8 @@ local function runMainSafely()
     end
 end
 function main()
+    -- Keep UI handles in one table so Luau does not exhaust the 200 local-register limit.
+    local UI = {}
     local Players = game:GetService("Players")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local RunService = game:GetService("RunService")
@@ -980,7 +982,7 @@ function main()
     pcall(function()
         Library.DPIScale = 0.85
     end)
-    local Window = Library:CreateWindow({
+    UI.Window = Library:CreateWindow({
         ["Title"] = HUB_NAME,
         ["Footer"] = "vilanxware / " .. BUILD_NAME,
         ["ShowCustomCursor"] = true,
@@ -1022,11 +1024,11 @@ function main()
     end)
     local function addTab(tabTitle, tabIcon)
         local tabCreated, tab = pcall(function()
-            return Window:AddTab(tabTitle, tabIcon)
+            return UI.Window:AddTab(tabTitle, tabIcon)
         end)
         if not tabCreated or not tab then
             tabCreated, tab = pcall(function()
-                return Window:AddTab(tabTitle)
+                return UI.Window:AddTab(tabTitle)
             end)
         end
         if not tabCreated then
@@ -1175,23 +1177,23 @@ function main()
     local function appendDetectionLog()
 
     end
-    local homeTab = addTab("Home", "house")
-    if homeTab then
+    UI.homeTab = addTab("Home", "house")
+    if UI.homeTab then
         local value_603
         local value_604
         local value_605
-        value_603 = homeTab:AddLeftGroupbox("Features · " .. BUILD_NAME)
+        value_603 = UI.homeTab:AddLeftGroupbox("Features · " .. BUILD_NAME)
         for index_1258, item_1259 in ipairs(FEATURES) do
             value_603:AddLabel("• " .. item_1259, true)
         end
-        value_604 = homeTab:AddLeftGroupbox("What's New")
+        value_604 = UI.homeTab:AddLeftGroupbox("What's New")
         for index_1256, item_1257 in ipairs(CHANGELOG) do
             value_604:AddLabel(item_1257.v, false)
             for index_1303, item_1304 in ipairs(item_1257.notes) do
                 value_604:AddLabel("• " .. item_1304, true)
             end
         end
-        value_605 = homeTab:AddRightGroupbox("vilanxware Community")
+        value_605 = UI.homeTab:AddRightGroupbox("vilanxware Community")
         value_605:AddLabel("Join our Discord for updates, support, and giveaways — and to never miss a new release.", true)
         value_605:AddButton({
             ["Text"] = "Join Discord (copy invite)",
@@ -1207,9 +1209,9 @@ function main()
             pcall(notify, BUILD_NAME .. " loaded — open the Home tab and join our Discord!", 8)
         end)
     end
-    local evidenceTab = addTab("Evidence", "search")
-    local detectionsTab = addTab("Detections", "ghost")
-    local utilitiesTab = addTab("Utilities", "wrench")
+    UI.evidenceTab = addTab("Evidence", "search")
+    UI.detectionsTab = addTab("Detections", "ghost")
+    UI.utilitiesTab = addTab("Utilities", "wrench")
     local recentGhostTells = {
     }
     local lastPlayerDeathAt = 0
@@ -1235,34 +1237,34 @@ function main()
             lastPlayerDeathAt = tick()
         end))
     end
-    local liveGhostGroup = detectionsTab:AddLeftGroupbox("Active Ghost (live)")
-    local ghostStateLabel = liveGhostGroup:AddLabel("State: no ghost spawned", true)
-    liveGhostGroup:AddToggle("GH_Telemetry", {
+    UI.liveGhostGroup = UI.detectionsTab:AddLeftGroupbox("Active Ghost (live)")
+    UI.ghostStateLabel = UI.liveGhostGroup:AddLabel("State: no ghost spawned", true)
+    UI.liveGhostGroup:AddToggle("GH_Telemetry", {
         ["Text"] = "Live telemetry",
         ["Default"] = true,
     })
-    liveGhostGroup:AddToggle("GH_HuntAlert", {
+    UI.liveGhostGroup:AddToggle("GH_HuntAlert", {
         ["Text"] = "Hunt alert (notify)",
         ["Default"] = true,
     })
-    liveGhostGroup:AddToggle("GH_Haunt", {
+    UI.liveGhostGroup:AddToggle("GH_Haunt", {
         ["Text"] = "On-screen haunt warning",
         ["Default"] = true,
     })
-    liveGhostGroup:AddToggle("GH_Hints", {
+    UI.liveGhostGroup:AddToggle("GH_Hints", {
         ["Text"] = "Tip notifications",
         ["Default"] = true,
         ["Tooltip"] = "Pop-up tips like 'Glass → Banshee'. Turn OFF to silence them — detection & auto-guess still work.",
     })
-    liveGhostGroup:AddToggle("GH_Behaviour", {
+    UI.liveGhostGroup:AddToggle("GH_Behaviour", {
         ["Text"] = "Ghost-type detectors",
         ["Default"] = true,
         ["Tooltip"] = "Live tells: Banshee (glass — esp. heavy during a hunt), Entity (teleports), Vex (invisible on LIDAR / walks through walls), plus any ability flag the game exposes on the ghost (Umbra no-footsteps, Skinwalker mimic, etc.). Siren (always-female voice) and Ravager (auto EMF 5) are listed as tells in the Identifier.",
     })
-    local ghostTellsGroup
-    local ghostTellsLabel
-    ghostTellsGroup = detectionsTab:AddRightGroupbox("Ghost-Type Tells (possible now)")
-    ghostTellsLabel = ghostTellsGroup:AddLabel("Spawn a ghost and add evidence to narrow the list.", true)
+    UI.ghostTellsGroup = nil
+    UI.ghostTellsLabel = nil
+    UI.ghostTellsGroup = UI.detectionsTab:AddRightGroupbox("Ghost-Type Tells (possible now)")
+    UI.ghostTellsLabel = UI.ghostTellsGroup:AddLabel("Spawn a ghost and add evidence to narrow the list.", true)
     task.spawn(function()
         while running do
             local value_1020
@@ -1292,7 +1294,7 @@ function main()
                 value_1349 = (value_1347 and "") or (("%d still possible — watch for:\n"):format(#value_1020))
                 value_1021 = ((#value_1348 > 0) and (value_1349 .. table.concat(value_1348, (value_1347 and "\n\n") or "\n"))) or "No specific tells for the current candidates."
             end
-            setControlText(ghostTellsLabel, value_1021)
+            setControlText(UI.ghostTellsLabel, value_1021)
             task.wait(0.5)
         end
     end)
@@ -1505,14 +1507,14 @@ function main()
             task.wait(1)
         end
     end)
-    local counterToolsGroup = detectionsTab:AddLeftGroupbox("Counter Tools")
-    local energyStatusLabel = counterToolsGroup:AddLabel("Energy: —", true)
-    counterToolsGroup:AddToggle("CT_EnergyAlert", {
+    UI.counterToolsGroup = UI.detectionsTab:AddLeftGroupbox("Counter Tools")
+    UI.energyStatusLabel = UI.counterToolsGroup:AddLabel("Energy: —", true)
+    UI.counterToolsGroup:AddToggle("CT_EnergyAlert", {
         ["Text"] = "Low-energy alert",
         ["Default"] = false,
         ["Tooltip"] = "Keres/Wendigo target the LOWEST-energy player; Wraith drains you. Warns when your Energy drops below the threshold.",
     })
-    counterToolsGroup:AddSlider("CT_EnergyThr", {
+    UI.counterToolsGroup:AddSlider("CT_EnergyThr", {
         ["Text"] = "Alert below",
         ["Default"] = 90,
         ["Min"] = 10,
@@ -1520,7 +1522,7 @@ function main()
         ["Rounding"] = 0,
         ["Suffix"] = "%",
     })
-    counterToolsGroup:AddButton({
+    UI.counterToolsGroup:AddButton({
         ["Text"] = "Turn ON all room lights",
         ["Func"] = function()
             local value_607
@@ -1561,7 +1563,7 @@ function main()
             notify(("Flipped %d light switch(es) — light slows Umbra/Shadow/Nightmare."):format(value_609))
         end,
     })
-    counterToolsGroup:AddLabel("Vesper: stand still / crouch in a hunt to be unhearable.\nWraith / Aswang: salt slows + detects them.\nDemon: keep a crucifix close.", true)
+    UI.counterToolsGroup:AddLabel("Vesper: stand still / crouch in a hunt to be unhearable.\nWraith / Aswang: salt slows + detects them.\nDemon: keep a crucifix close.", true)
     task.spawn(function()
         local value_611
         value_611 = false
@@ -1570,7 +1572,7 @@ function main()
             local salt_piles_1027 = workspace:FindFirstChild("SaltPiles")
             local value_1028 = (salt_piles_1027 and #salt_piles_1027:GetChildren()) or 0
             if type(energy_1026) == "number" then
-                setControlText(energyStatusLabel, ("Energy: %d%%    Salt piles: %d"):format(math.floor(energy_1026), value_1028))
+                setControlText(UI.energyStatusLabel, ("Energy: %d%%    Salt piles: %d"):format(math.floor(energy_1026), value_1028))
                 if toggleEnabled("CT_EnergyAlert") and (energy_1026 < numericOption("CT_EnergyThr", 90)) then
                     if not value_611 then
                         notify(("Low energy (%d%%) — you may be the ghost's target."):format(math.floor(energy_1026)), 4)
@@ -1580,28 +1582,28 @@ function main()
                     value_611 = false
                 end
             else
-                setControlText(energyStatusLabel, ("Energy: —    Salt piles: %d"):format(value_1028))
+                setControlText(UI.energyStatusLabel, ("Energy: —    Salt piles: %d"):format(value_1028))
             end
             task.wait(1)
         end
     end)
-    local lightsPowerGroup = utilitiesTab:AddRightGroupbox("Lights / Power")
-    lightsPowerGroup:AddToggle("LP_LightsOn", {
+    UI.lightsPowerGroup = UI.utilitiesTab:AddRightGroupbox("Lights / Power")
+    UI.lightsPowerGroup:AddToggle("LP_LightsOn", {
         ["Text"] = "Auto turn ON lights",
         ["Default"] = false,
         ["Tooltip"] = "Keeps every room light ON (light slows Umbra/Shadow/Nightmare + helps you see). Needs the fuse box ON.",
     })
-    lightsPowerGroup:AddToggle("LP_LightsOff", {
+    UI.lightsPowerGroup:AddToggle("LP_LightsOff", {
         ["Text"] = "Auto turn OFF lights",
         ["Default"] = false,
         ["Tooltip"] = "Keeps every room light OFF (dark).",
     })
-    lightsPowerGroup:AddToggle("LP_FuseOn", {
+    UI.lightsPowerGroup:AddToggle("LP_FuseOn", {
         ["Text"] = "Auto turn ON fuse box",
         ["Default"] = false,
         ["Tooltip"] = "Flips the fuse box back ON whenever it reads as off, so lights work.",
     })
-    lightsPowerGroup:AddLabel("ON/OFF are exclusive — ON wins if both are set.", true)
+    UI.lightsPowerGroup:AddLabel("ON/OFF are exclusive — ON wins if both are set.", true)
     local function firePrompt(arg_612)
         local value_615
         local value_616
@@ -1692,7 +1694,7 @@ function main()
             task.wait(1.2)
         end
     end)
-    local escapeGroup = utilitiesTab:AddLeftGroupbox("Escape")
+    UI.escapeGroup = UI.utilitiesTab:AddLeftGroupbox("Escape")
     local function teleportToBaseCamp()
         local baseCampCFrame = findBaseCampCFrame()
         local rootPart_462 = getRootPart()
@@ -1702,27 +1704,27 @@ function main()
         end
         return false
     end
-    local escapeButton = escapeGroup:AddButton({
+    UI.escapeButton = UI.escapeGroup:AddButton({
         ["Text"] = "Escape to spawn now",
         ["Func"] = function()
             notify((teleportToBaseCamp() and "Teleported to spawn.") or "Spawn not found — are you in a mission?")
         end,
     })
     pcall(function()
-        escapeGroup:AddLabel("Escape key"):AddKeyPicker("GH_EscapeKey", {
+        UI.escapeGroup:AddLabel("Escape key"):AddKeyPicker("GH_EscapeKey", {
             ["Default"] = "T",
             ["Mode"] = "Toggle",
             ["Text"] = "Escape",
             ["SyncToggleState"] = false,
         })
     end)
-    escapeGroup:AddToggle("GH_AutoEscape", {
+    UI.escapeGroup:AddToggle("GH_AutoEscape", {
         ["Text"] = "Auto-escape on hunt",
         ["Default"] = false,
         ["Tooltip"] = "Instantly TP to the map spawn the moment a hunt starts.",
     })
-    local ghostRoomGroup = utilitiesTab:AddLeftGroupbox("Thermo / Ghost Room")
-    local ghostRoomLabel = ghostRoomGroup:AddLabel("Ghost room: —", true)
+    UI.ghostRoomGroup = UI.utilitiesTab:AddLeftGroupbox("Thermo / Ghost Room")
+    UI.ghostRoomLabel = UI.ghostRoomGroup:AddLabel("Ghost room: —", true)
     local function findLikelyGhostRoom()
         local mapModel_464
         local roomsFolder_465
@@ -1766,7 +1768,7 @@ function main()
         end
         return false
     end
-    ghostRoomGroup:AddToggle("TR_Alert", {
+    UI.ghostRoomGroup:AddToggle("TR_Alert", {
         ["Text"] = "Alert on room change",
         ["Default"] = true,
         ["Tooltip"] = "Notifies when the ghost moves room (it roams on higher difficulties). Read-only — no auto-TP.",
@@ -1791,7 +1793,7 @@ function main()
                     value_1037 = ("%.1f°C"):format(temperature_1353)
                 end
             end
-            setControlText(ghostRoomLabel, ("Ghost room: %s (%s)\nRoom temp: %s"):format(tostring(value_1033 or "—"), tostring(value_1034 or "—"), value_1037))
+            setControlText(UI.ghostRoomLabel, ("Ghost room: %s (%s)\nRoom temp: %s"):format(tostring(value_1033 or "—"), tostring(value_1034 or "—"), value_1037))
             if value_1036 and (value_1036 ~= lastRoomName) then
                 if lastRoomName ~= nil then
                     if toggleEnabled("TR_Alert") then
@@ -1804,7 +1806,7 @@ function main()
             task.wait(1)
         end
     end)
-    local teleportsGroup = utilitiesTab:AddRightGroupbox("Teleports")
+    UI.teleportsGroup = UI.utilitiesTab:AddRightGroupbox("Teleports")
     local function handleTeleportToGhostRoom()
         local ghostModel_477
         ghostModel_477 = findGhost()
@@ -1837,16 +1839,16 @@ function main()
             notify("Ghost position unavailable.")
         end
     end
-    local teleportRoomButton = teleportsGroup:AddButton({
+    UI.teleportRoomButton = UI.teleportsGroup:AddButton({
         ["Text"] = "TP to ghost room",
         ["Func"] = handleTeleportToGhostRoom,
     })
-    local teleportGhostButton = teleportsGroup:AddButton({
+    UI.teleportGhostButton = UI.teleportsGroup:AddButton({
         ["Text"] = "TP to ghost",
         ["Func"] = teleportToGhost,
     })
     pcall(function()
-        teleportsGroup:AddLabel("TP room key"):AddKeyPicker("TP_RoomKey", {
+        UI.teleportsGroup:AddLabel("TP room key"):AddKeyPicker("TP_RoomKey", {
             ["Default"] = "V",
             ["Mode"] = "Toggle",
             ["Text"] = "TP room",
@@ -1854,7 +1856,7 @@ function main()
         })
     end)
     pcall(function()
-        teleportsGroup:AddLabel("TP ghost key"):AddKeyPicker("TP_GhostKey", {
+        UI.teleportsGroup:AddLabel("TP ghost key"):AddKeyPicker("TP_GhostKey", {
             ["Default"] = "H",
             ["Mode"] = "Toggle",
             ["Text"] = "TP ghost",
@@ -1880,28 +1882,28 @@ function main()
             teleportToGhost()
         end
     end))
-    local ghostIdentifierGroup = evidenceTab:AddLeftGroupbox("Ghost Identifier")
-    ghostIdentifierGroup:AddDropdown("ID_Confirmed", {
+    UI.ghostIdentifierGroup = UI.evidenceTab:AddLeftGroupbox("Ghost Identifier")
+    UI.ghostIdentifierGroup:AddDropdown("ID_Confirmed", {
         ["Values"] = EVIDENCE_NAMES,
         ["Default"] = {
         },
         ["Multi"] = true,
         ["Text"] = "Confirmed evidence",
     })
-    ghostIdentifierGroup:AddDropdown("ID_RuledOut", {
+    UI.ghostIdentifierGroup:AddDropdown("ID_RuledOut", {
         ["Values"] = EVIDENCE_NAMES,
         ["Default"] = {
         },
         ["Multi"] = true,
         ["Text"] = "Ruled-out evidence",
     })
-    ghostIdentifierGroup:AddToggle("ID_AutoNeg", {
+    UI.ghostIdentifierGroup:AddToggle("ID_AutoNeg", {
         ["Text"] = "Auto rule-out absent Ghost Orb",
         ["Default"] = true,
         ["Tooltip"] = "The orb Part stays all match for orb-ghosts; if it's absent after the 15s grace, this ghost gives NO orb — auto-rules-out Ghost Orb to narrow the list.",
     })
-    local possibleGhostsLabel = ghostIdentifierGroup:AddLabel("Possible (" .. GhostCount .. "): all", true)
-    local ghostTraitsLabel = nil
+    UI.possibleGhostsLabel = UI.ghostIdentifierGroup:AddLabel("Possible (" .. GhostCount .. "): all", true)
+    UI.ghostTraitsLabel = nil
     local journalEvidenceIdByName = {
         ["EMF Level 5"] = "EMFLevel5",
         ["Spirit Box"] = "SpiritBox",
@@ -2083,12 +2085,12 @@ function main()
         "Laser Projector",
         "Wither",
     }
-    local evidenceStatusGroup = evidenceTab:AddLeftGroupbox("Evidence Status")
-    local evidenceStatusLabel = evidenceStatusGroup:AddLabel("—", true)
-    local autoGuessGroup = evidenceTab:AddRightGroupbox("Auto Guess / Profile")
-    local autoGuessLabel = autoGuessGroup:AddLabel("—", true)
+    UI.evidenceStatusGroup = UI.evidenceTab:AddLeftGroupbox("Evidence Status")
+    UI.evidenceStatusLabel = UI.evidenceStatusGroup:AddLabel("—", true)
+    UI.autoGuessGroup = UI.evidenceTab:AddRightGroupbox("Auto Guess / Profile")
+    UI.autoGuessLabel = UI.autoGuessGroup:AddLabel("—", true)
     local singlePossibleGhost
-    ghostIdentifierGroup:AddButton({
+    UI.ghostIdentifierGroup:AddButton({
         ["Text"] = "Mark all detected in journal",
         ["Func"] = function()
             if not findJournalEvidenceContainer() then
@@ -2143,21 +2145,21 @@ function main()
             end)
         end,
     })
-    local autoDetectGroup = evidenceTab:AddRightGroupbox("Auto-Detect Evidence")
-    local autoDetectToggle = autoDetectGroup:AddToggle("AD_Detect", {
+    UI.autoDetectGroup = UI.evidenceTab:AddRightGroupbox("Auto-Detect Evidence")
+    UI.autoDetectToggle = UI.autoDetectGroup:AddToggle("AD_Detect", {
         ["Text"] = "Auto-detect evidence",
         ["Default"] = true,
         ["Tooltip"] = "Reads the game's real signals — handprints / orb / writing / wither, freezing, EMF 5, laser, spirit box — plus journal sync, and feeds the identifier.",
     })
     pcall(function()
-        autoDetectToggle:AddKeyPicker("AD_DetectKey", {
+        UI.autoDetectToggle:AddKeyPicker("AD_DetectKey", {
             ["Default"] = "K",
             ["Mode"] = "Toggle",
             ["Text"] = "Auto-detect",
             ["SyncToggleState"] = true,
         })
     end)
-    autoDetectGroup:AddSlider("AD_Freeze", {
+    UI.autoDetectGroup:AddSlider("AD_Freeze", {
         ["Text"] = "Freezing at ≤",
         ["Default"] = 0.5,
         ["Min"] = -5,
@@ -2165,20 +2167,20 @@ function main()
         ["Rounding"] = 1,
         ["Suffix"] = " °C",
     })
-    local autoSpiritToggle = autoDetectGroup:AddToggle("AD_AutoSpirit", {
+    UI.autoSpiritToggle = UI.autoDetectGroup:AddToggle("AD_AutoSpirit", {
         ["Text"] = "Auto Spirit Box",
         ["Default"] = false,
         ["Tooltip"] = "Grabs + activates a Spirit Box, holds a steady ~8-stud distance from the ghost inside the house (no orbiting — anti-cheat safe), and asks every ~1.5s; pauses during a hunt.",
     })
     pcall(function()
-        autoSpiritToggle:AddKeyPicker("AD_AutoSpiritKey", {
+        UI.autoSpiritToggle:AddKeyPicker("AD_AutoSpiritKey", {
             ["Default"] = "P",
             ["Mode"] = "Toggle",
             ["Text"] = "Auto Spirit",
             ["SyncToggleState"] = true,
         })
     end)
-    autoDetectGroup:AddButton({
+    UI.autoDetectGroup:AddButton({
         ["Text"] = "Reset auto-detected",
         ["Func"] = function()
             local value_512
@@ -2208,7 +2210,7 @@ function main()
             notify("Cleared auto-detected evidence.")
         end,
     })
-    local autoDetectedLabel = autoDetectGroup:AddLabel("Auto-detected: (none)", true)
+    UI.autoDetectedLabel = UI.autoDetectGroup:AddLabel("Auto-detected: (none)", true)
     local function parseEvidenceSet(arg_514)
         local value_516
         value_516 = {
@@ -2249,12 +2251,12 @@ function main()
                     resetEvidenceDetectionState()
                     table.clear(recentGhostTells)
                 end
-                setControlText(possibleGhostsLabel, "In lobby — start a mission to detect.")
-                setControlText(ghostTraitsLabel, "")
-                setControlText(autoDetectedLabel, "")
-                setControlText(ghostStateLabel, "State: no mission")
-                setControlText(evidenceStatusLabel, "—")
-                setControlText(autoGuessLabel, "—")
+                setControlText(UI.possibleGhostsLabel, "In lobby — start a mission to detect.")
+                setControlText(UI.ghostTraitsLabel, "")
+                setControlText(UI.autoDetectedLabel, "")
+                setControlText(UI.ghostStateLabel, "State: no mission")
+                setControlText(UI.evidenceStatusLabel, "—")
+                setControlText(UI.autoGuessLabel, "—")
                 singlePossibleGhost = nil
                 detectionState.ghostType, detectionState.ghostPct, detectionState.ghostSpeed = nil, nil, nil
                 task.wait(0.6)
@@ -2302,7 +2304,7 @@ function main()
                         value_1364[#value_1364 + 1] = item_1539 .. ": YES"
                     end
                 end
-                setControlText(evidenceStatusLabel, table.concat(value_1364, "\n"))
+                setControlText(UI.evidenceStatusLabel, table.concat(value_1364, "\n"))
                 value_1111 = {
                 }
                 for key_1365 in pairs(tableOption("ID_RuledOut")) do
@@ -2368,7 +2370,7 @@ function main()
                         value_1117 = "4th evidence → Skinwalker (mimic faking an extra evidence)"
                     end
                 end
-                setControlText(possibleGhostsLabel, ("Possible (%d): %s%s%s"):format(#value_1115, ((#value_1115 > 0) and table.concat(value_1115, ", ")) or "none — re-check", (value_1113 and ("\n" .. value_1113)) or "", (value_1117 and ("\n" .. value_1117)) or ""))
+                setControlText(UI.possibleGhostsLabel, ("Possible (%d): %s%s%s"):format(#value_1115, ((#value_1115 > 0) and table.concat(value_1115, ", ")) or "none — re-check", (value_1113 and ("\n" .. value_1113)) or "", (value_1117 and ("\n" .. value_1117)) or ""))
                 detectionState.possible = value_1115
                 value_1118 = {
                 }
@@ -2385,7 +2387,7 @@ function main()
                         end
                     end
                 end
-                setControlText(ghostTraitsLabel, table.concat(value_1118, "\n"))
+                setControlText(UI.ghostTraitsLabel, table.concat(value_1118, "\n"))
                 singlePossibleGhost = ((#value_1115 == 1) and value_1115[1]) or nil
                 local value_1368
                 local value_1369
@@ -2440,7 +2442,7 @@ function main()
                         value_1370[#value_1370 + 1] = ("%d. %s — %d%%%s"):format(index_1574, item_1575.name, value_1576, ((index_1574 == 1) and (#value_1368 == 1) and "  ✓") or "")
                     end
                 end
-                setControlText(autoGuessLabel, table.concat(value_1370, "\n"))
+                setControlText(UI.autoGuessLabel, table.concat(value_1370, "\n"))
                 if toggleEnabled("GH_Telemetry") then
                     local find_ghost_1431 = findGhost()
                     local text_1432, text_1433 = "—", "—"
@@ -2470,9 +2472,9 @@ function main()
                     local value_1435 = find_ghost_1431 and find_ghost_1431:GetAttribute("VisualModel")
                     local value_1436 = find_ghost_1431 and find_ghost_1431:GetAttribute("Gender")
                     local value_1437 = (detectionState.roamPct and (detectionState.roamPct .. "% in fav room" .. (((detectionState.roamPct >= 80) and " (Specter-like)") or ""))) or "sampling..."
-                    setControlText(ghostStateLabel, ("State: %s\nSpeed: %s\nDistance: %s\nRoaming: %s"):format(text_1434, text_1433, text_1432, value_1437))
+                    setControlText(UI.ghostStateLabel, ("State: %s\nSpeed: %s\nDistance: %s\nRoaming: %s"):format(text_1434, text_1433, text_1432, value_1437))
                 else
-                    setControlText(ghostStateLabel, "State: telemetry off")
+                    setControlText(UI.ghostStateLabel, "State: telemetry off")
                 end
                 local value_1372
                 value_1372 = {
@@ -2481,7 +2483,7 @@ function main()
                     value_1372[#value_1372 + 1] = key_1603
                 end
                 table.sort(value_1372)
-                setControlText(autoDetectedLabel, "Auto-detected: " .. (((#value_1372 > 0) and table.concat(value_1372, ", ")) or "(none)"))
+                setControlText(UI.autoDetectedLabel, "Auto-detected: " .. (((#value_1372 > 0) and table.concat(value_1372, ", ")) or "(none)"))
                 task.wait(0.40000000000009095)
             end
         end
@@ -2560,46 +2562,46 @@ function main()
             huntWarningLabel.Visible = false
         end
     end))
-    local espTab = addTab("ESP", "eye")
-    local ghostEspGroup = espTab:AddLeftGroupbox("Ghost ESP")
-    addColorPicker(ghostEspGroup:AddToggle("ESP_Ghost", {
+    UI.espTab = addTab("ESP", "eye")
+    UI.ghostEspGroup = UI.espTab:AddLeftGroupbox("Ghost ESP")
+    addColorPicker(UI.ghostEspGroup:AddToggle("ESP_Ghost", {
         ["Text"] = "Ghost ESP",
         ["Default"] = false,
     }), "ESP_GhostColor", Color3.fromRGB(255, 70, 70))
-    addColorPicker(ghostEspGroup:AddToggle("ESP_FavRoom", {
+    addColorPicker(UI.ghostEspGroup:AddToggle("ESP_FavRoom", {
         ["Text"] = "Highlight favorite room",
         ["Default"] = false,
     }), "ESP_FavColor", Color3.fromRGB(170, 90, 230))
-    addColorPicker(ghostEspGroup:AddToggle("ESP_Orb", {
+    addColorPicker(UI.ghostEspGroup:AddToggle("ESP_Orb", {
         ["Text"] = "Ghost Orb ESP",
         ["Default"] = false,
         ["Tooltip"] = "Reveals the Ghost Orb part — it's normally invisible/dormant — so you can find and photograph it.",
     }), "ESP_OrbColor", Color3.fromRGB(120, 200, 255))
-    addColorPicker(ghostEspGroup:AddToggle("ESP_Hand", {
+    addColorPicker(UI.ghostEspGroup:AddToggle("ESP_Hand", {
         ["Text"] = "Handprint / Footprint ESP",
         ["Default"] = false,
         ["Tooltip"] = "Reveals every print in the Handprints folder — UV handprints AND footprints in salt — without a blacklight, each tagged by type.",
     }), "ESP_HandColor", Color3.fromRGB(255, 120, 220))
-    local teammateEspGroup = espTab:AddRightGroupbox("Teammate ESP")
-    addColorPicker(teammateEspGroup:AddToggle("ESP_Team", {
+    UI.teammateEspGroup = UI.espTab:AddRightGroupbox("Teammate ESP")
+    addColorPicker(UI.teammateEspGroup:AddToggle("ESP_Team", {
         ["Text"] = "Player ESP",
         ["Default"] = false,
     }), "ESP_TeamColor", Color3.fromRGB(80, 220, 120))
-    teammateEspGroup:AddToggle("ESP_TeamHP", {
+    UI.teammateEspGroup:AddToggle("ESP_TeamHP", {
         ["Text"] = "Show energy/health on tag",
         ["Default"] = true,
     })
-    local itemEspGroup = espTab:AddLeftGroupbox("Item ESP")
-    addColorPicker(itemEspGroup:AddToggle("ESP_Item", {
+    UI.itemEspGroup = UI.espTab:AddLeftGroupbox("Item ESP")
+    addColorPicker(UI.itemEspGroup:AddToggle("ESP_Item", {
         ["Text"] = "Item ESP",
         ["Default"] = false,
     }), "ESP_ItemColor", Color3.fromRGB(245, 190, 70))
-    addColorPicker(itemEspGroup:AddToggle("ESP_Special", {
+    addColorPicker(UI.itemEspGroup:AddToggle("ESP_Special", {
         ["Text"] = "Special items only",
         ["Default"] = false,
     }), "ESP_SpecialColor", Color3.fromRGB(60, 230, 180))
-    local espFiltersGroup = espTab:AddRightGroupbox("Filters")
-    espFiltersGroup:AddSlider("ESP_MaxDist", {
+    UI.espFiltersGroup = UI.espTab:AddRightGroupbox("Filters")
+    UI.espFiltersGroup:AddSlider("ESP_MaxDist", {
         ["Text"] = "Max distance",
         ["Default"] = 1000,
         ["Min"] = 50,
@@ -2607,11 +2609,11 @@ function main()
         ["Rounding"] = 0,
         ["Suffix"] = " studs",
     })
-    espFiltersGroup:AddToggle("ESP_AppendDist", {
+    UI.espFiltersGroup:AddToggle("ESP_AppendDist", {
         ["Text"] = "Append distance to tags",
         ["Default"] = true,
     })
-    espFiltersGroup:AddSlider("ESP_Rate", {
+    UI.espFiltersGroup:AddSlider("ESP_Rate", {
         ["Text"] = "ESP update rate",
         ["Default"] = 30,
         ["Min"] = 5,
@@ -2870,19 +2872,19 @@ function main()
         removePlayerBillboard(player_538)
         removeHighlight("team_" .. player_538.Name)
     end)
-    local itemsTab = addTab("Items", "box")
-    local worldItemsGroup = itemsTab:AddLeftGroupbox("World Items")
-    local worldItemCountLabel = worldItemsGroup:AddLabel("Items in world: —", true)
-    worldItemsGroup:AddToggle("IT_Counter", {
+    UI.itemsTab = addTab("Items", "box")
+    UI.worldItemsGroup = UI.itemsTab:AddLeftGroupbox("World Items")
+    UI.worldItemCountLabel = UI.worldItemsGroup:AddLabel("Items in world: —", true)
+    UI.worldItemsGroup:AddToggle("IT_Counter", {
         ["Text"] = "Live item counter",
         ["Default"] = true,
     })
-    worldItemsGroup:AddToggle("IT_CrossAlert", {
+    UI.worldItemsGroup:AddToggle("IT_CrossAlert", {
         ["Text"] = "Alert when a Cross is used",
         ["Default"] = true,
         ["Tooltip"] = "Notifies the moment a Cross gets burned (it floats/burns when it prevents a hunt). Burnt crosses also turn grey on the Item ESP.",
     })
-    worldItemsGroup:AddButton({
+    UI.worldItemsGroup:AddButton({
         ["Text"] = "List items to console",
         ["Func"] = function()
             local items = scanItems()
@@ -2894,7 +2896,7 @@ function main()
         end,
     })
     local itemPlacementRunning = false
-    worldItemsGroup:AddToggle("IT_PlaceActive", {
+    UI.worldItemsGroup:AddToggle("IT_PlaceActive", {
         ["Text"] = "Activate items before dropping",
         ["Default"] = true,
         ["Tooltip"] = "Right-click (ToggleItemState) each item on before dropping it in the ghost room.",
@@ -3064,13 +3066,13 @@ function main()
             end)
         end)
     end
-    local autoPlaceToggle = worldItemsGroup:AddToggle("IT_Place", {
+    UI.autoPlaceToggle = UI.worldItemsGroup:AddToggle("IT_Place", {
         ["Text"] = "Auto-place items in ghost room",
         ["Default"] = false,
         ["Tooltip"] = "Carries all bringable gear to the ghost room, 3 at a time, then turns itself off.",
     })
     pcall(function()
-        autoPlaceToggle:AddKeyPicker("IT_PlaceKey", {
+        UI.autoPlaceToggle:AddKeyPicker("IT_PlaceKey", {
             ["Default"] = "I",
             ["Mode"] = "Toggle",
             ["Text"] = "Place items",
@@ -3115,60 +3117,60 @@ function main()
     task.spawn(function()
         while running do
             if toggleEnabled("IT_Counter") then
-                setControlText(worldItemCountLabel, ("Items in world: %d"):format(#scanItems()))
+                setControlText(UI.worldItemCountLabel, ("Items in world: %d"):format(#scanItems()))
             else
-                setControlText(worldItemCountLabel, "Items in world: off")
+                setControlText(UI.worldItemCountLabel, "Items in world: off")
             end
             task.wait(1)
         end
     end)
-    local playerTab
-    local movementGroup
-    local noclipToggle
-    local selfGroup
-    local playerStatusLabel
-    playerTab = addTab("Player", "user")
-    movementGroup = playerTab:AddLeftGroupbox("Movement")
-    movementGroup:AddLabel("⚠ Server-authoritative — may revert/kick.", true)
-    movementGroup:AddToggle("PL_SpeedOn", {
+    UI.playerTab = nil
+    UI.movementGroup = nil
+    UI.noclipToggle = nil
+    UI.selfGroup = nil
+    UI.playerStatusLabel = nil
+    UI.playerTab = addTab("Player", "user")
+    UI.movementGroup = UI.playerTab:AddLeftGroupbox("Movement")
+    UI.movementGroup:AddLabel("⚠ Server-authoritative — may revert/kick.", true)
+    UI.movementGroup:AddToggle("PL_SpeedOn", {
         ["Text"] = "Custom WalkSpeed",
         ["Default"] = false,
         ["Risky"] = true,
     })
-    movementGroup:AddSlider("PL_Speed", {
+    UI.movementGroup:AddSlider("PL_Speed", {
         ["Text"] = "WalkSpeed",
         ["Default"] = 16,
         ["Min"] = 16,
         ["Max"] = 60,
         ["Rounding"] = 0,
     })
-    movementGroup:AddToggle("PL_JumpOn", {
+    UI.movementGroup:AddToggle("PL_JumpOn", {
         ["Text"] = "Custom JumpPower",
         ["Default"] = false,
         ["Risky"] = true,
     })
-    movementGroup:AddSlider("PL_Jump", {
+    UI.movementGroup:AddSlider("PL_Jump", {
         ["Text"] = "JumpPower",
         ["Default"] = 50,
         ["Min"] = 50,
         ["Max"] = 150,
         ["Rounding"] = 0,
     })
-    noclipToggle = movementGroup:AddToggle("PL_Noclip", {
+    UI.noclipToggle = UI.movementGroup:AddToggle("PL_Noclip", {
         ["Text"] = "Noclip",
         ["Default"] = false,
         ["Risky"] = true,
     })
     pcall(function()
-        noclipToggle:AddKeyPicker("PL_NoclipKey", {
+        UI.noclipToggle:AddKeyPicker("PL_NoclipKey", {
             ["Default"] = "N",
             ["Mode"] = "Toggle",
             ["Text"] = "Noclip",
             ["SyncToggleState"] = true,
         })
     end)
-    selfGroup = playerTab:AddRightGroupbox("Self")
-    playerStatusLabel = selfGroup:AddLabel("Room: —\nHP: —   Energy: —", true)
+    UI.selfGroup = UI.playerTab:AddRightGroupbox("Self")
+    UI.playerStatusLabel = UI.selfGroup:AddLabel("Room: —\nHP: —   Energy: —", true)
     trackConnection(RunService.Heartbeat:Connect(function()
         if not running then
             return 
@@ -3204,32 +3206,32 @@ function main()
             local value_946
             value_945 = getHumanoid()
             value_946 = LocalPlayer:GetAttribute("Energy") or LocalPlayer:GetAttribute("Stamina")
-            setControlText(playerStatusLabel, ("Room: %s\nHP: %s   Energy: %s"):format(tostring(LocalPlayer:GetAttribute("CurrentRoom") or "—"), (value_945 and tostring(math.floor(value_945.Health))) or "—", (value_946 and tostring(math.floor(value_946))) or "—"))
+            setControlText(UI.playerStatusLabel, ("Room: %s\nHP: %s   Energy: %s"):format(tostring(LocalPlayer:GetAttribute("CurrentRoom") or "—"), (value_945 and tostring(math.floor(value_945.Health))) or "—", (value_946 and tostring(math.floor(value_946))) or "—"))
             task.wait(0.5)
         end
     end)
-    local visualsTab = addTab("Visuals", "sun")
-    local lightingGroup = visualsTab:AddLeftGroupbox("Lighting & Camera")
-    lightingGroup:AddToggle("VIS_Fullbright", {
+    UI.visualsTab = addTab("Visuals", "sun")
+    UI.lightingGroup = UI.visualsTab:AddLeftGroupbox("Lighting & Camera")
+    UI.lightingGroup:AddToggle("VIS_Fullbright", {
         ["Text"] = "Fullbright",
         ["Default"] = false,
     })
-    lightingGroup:AddSlider("VIS_Bright", {
+    UI.lightingGroup:AddSlider("VIS_Bright", {
         ["Text"] = "Brightness",
         ["Default"] = 2,
         ["Min"] = 1,
         ["Max"] = 5,
         ["Rounding"] = 1,
     })
-    lightingGroup:AddToggle("VIS_NoFog", {
+    UI.lightingGroup:AddToggle("VIS_NoFog", {
         ["Text"] = "No Fog",
         ["Default"] = false,
     })
-    lightingGroup:AddToggle("VIS_FOVOn", {
+    UI.lightingGroup:AddToggle("VIS_FOVOn", {
         ["Text"] = "Custom FOV",
         ["Default"] = false,
     })
-    lightingGroup:AddSlider("VIS_FOV", {
+    UI.lightingGroup:AddSlider("VIS_FOV", {
         ["Text"] = "Field of view",
         ["Default"] = 70,
         ["Min"] = 40,
@@ -3636,17 +3638,17 @@ function main()
             end
         end
     end)
-    local settingsTab = addTab("UI Settings", "settings")
-    local miscSettingsGroup = settingsTab:AddLeftGroupbox("Misc")
+    UI.settingsTab = addTab("UI Settings", "settings")
+    UI.miscSettingsGroup = UI.settingsTab:AddLeftGroupbox("Misc")
     pcall(function()
-        miscSettingsGroup:AddLabel("Menu toggle key"):AddKeyPicker("MenuKeybind", {
+        UI.miscSettingsGroup:AddLabel("Menu toggle key"):AddKeyPicker("MenuKeybind", {
             ["Default"] = "RightControl",
             ["NoUI"] = true,
             ["Text"] = "Menu toggle",
         })
         Library.ToggleKeybind = Library.Options.MenuKeybind
     end)
-    miscSettingsGroup:AddButton({
+    UI.miscSettingsGroup:AddButton({
         ["Text"] = "Unload",
         ["Func"] = function()
             running = false
@@ -3659,7 +3661,7 @@ function main()
             end)
         end,
     })
-    miscSettingsGroup:AddButton({
+    UI.miscSettingsGroup:AddButton({
         ["Text"] = "Forget saved key (re-key)",
         ["Func"] = function()
             pcall(function()
@@ -3679,15 +3681,15 @@ function main()
             end)
         end,
     })
-    miscSettingsGroup:AddButton({
+    UI.miscSettingsGroup:AddButton({
         ["Text"] = "Clear UI cache (redownload)",
         ["Func"] = function()
             clearUiCache()
             notify("UI cache cleared — re-downloads next launch.")
         end,
     })
-    local debugGroup = settingsTab:AddRightGroupbox("Debug")
-    debugGroup:AddButton({
+    UI.debugGroup = UI.settingsTab:AddRightGroupbox("Debug")
+    UI.debugGroup:AddButton({
         ["Text"] = "Copy debug info",
         ["Func"] = function()
             local debugStatusLabel
@@ -3722,8 +3724,8 @@ function main()
         end,
     })
     if DISABLE_TELEPORT_QUEUE then
-        debugGroup:AddLabel("Run INSIDE a mission, then send the saved file.", true)
-        debugGroup:AddButton({
+        UI.debugGroup:AddLabel("Run INSIDE a mission, then send the saved file.", true)
+        UI.debugGroup:AddButton({
             ["Text"] = "Dump captured remote calls",
             ["Func"] = function()
                 local debugOutput
@@ -3746,7 +3748,7 @@ function main()
                 end
             end,
         })
-        debugGroup:AddButton({
+        UI.debugGroup:AddButton({
             ["Text"] = "Dump journal pages (open EVIDENCE tab first)",
             ["Func"] = function()
                 local playerGui_748 = LocalPlayer:FindFirstChild("PlayerGui")
@@ -3841,7 +3843,7 @@ function main()
                 end
             end,
         })
-        debugGroup:AddButton({
+        UI.debugGroup:AddButton({
             ["Text"] = "Scan mission now",
             ["Func"] = function()
                 local scanLines = {
@@ -4228,10 +4230,10 @@ function main()
             ThemeManager:SetFolder("vLnware/Demonology")
         end
         if SaveManager then
-            SaveManager:BuildConfigSection(settingsTab)
+            SaveManager:BuildConfigSection(UI.settingsTab)
         end
         if ThemeManager then
-            ThemeManager:ApplyToTab(settingsTab)
+            ThemeManager:ApplyToTab(UI.settingsTab)
         end
         if SaveManager then
             SaveManager:LoadAutoloadConfig()
