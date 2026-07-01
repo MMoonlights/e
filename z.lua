@@ -1,5 +1,5 @@
 local URLS = {
-    Demo = "https://raw.githubusercontent.com/MMoonlights/e/refs/heads/main/Demo.lua",
+    Demo = "https://raw.githubusercontent.com/MMoonlights/e/refs/heads/main/Demz.lua",
 
     Library = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/Library.lua",
 
