@@ -1,0 +1,90 @@
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local ChestRemoteEvent = ReplicatedStorage:WaitForChild("Event"):WaitForChild("Backpack"):WaitForChild("ChestRemoteEvent")
+local BackpackRemoteFunction = ReplicatedStorage:WaitForChild("Event"):WaitForChild("Backpack"):WaitForChild("BackpackRemoteFunction")
+
+-- Твои пути
+local ChestFolder = workspace["\229\174\157\231\174\177"] -- Папка "宝物"
+local SafeName = "\228\191\157\233\153\169\231\174\177"    -- Название сейфа "密码箱"
+
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
+
+local currentTargetChestId = nil 
+local chestOpenedSuccessfully = false
+
+-- УШИ: Слушаем сервер (на всякий случай оставляю скип по паролю, если найдутся другие)
+ChestRemoteEvent.OnClientEvent:Connect(function(action, data)
+    if not data or not data.chestId then return end
+    if data.chestId ~= currentTargetChestId then return end
+
+    -- Если вдруг какой-то другой сундук попросит пароль
+    if action == "RequestSafePassword" then
+        pcall(function() BackpackRemoteFunction:InvokeServer("CloseChest") end)
+        currentTargetChestId = nil
+        return
+    end
+
+    -- Если сундук нормально открылся
+    if action == "OpenChest" then
+        print("Сундук открыт! Забираю лут...")
+        chestOpenedSuccessfully = true
+        task.wait(0.3)
+
+        for _, item in ipairs(data.items or {}) do
+            if item.id then
+                print(" -> Забрал:", item.name or "Неизвестно")
+                pcall(function()
+                    BackpackRemoteFunction:InvokeServer("TakeChestItem", data.chestId, item.id, "MyBackpackInventory")
+                end)
+                task.wait(0.1)
+            end
+        end
+        
+        task.wait(0.2)
+        pcall(function() BackpackRemoteFunction:InvokeServer("CloseChest") end)
+        currentTargetChestId = nil
+    end
+end)
+
+-- ОСНОВНОЙ ЦИКЛ ФАРМА
+print("Запуск фермера. Сейфы ("..SafeName..") будут полностью игнорироваться.")
+
+for _, obj in ipairs(ChestFolder:GetChildren()) do
+    
+    -- Проверяем: это модель? И её название НЕ "Сейф"?
+    -- Если это сейф, код внутри просто не выполнится, мы прыгнем на следующий объект
+    if obj:IsA("Model") and obj.Name ~= SafeName then 
+        
+        local chestId = obj:GetAttribute("ChestId")
+        
+        if chestId then
+            currentTargetChestId = chestId
+            chestOpenedSuccessfully = false
+            
+            -- БЕРЕМ WORLDPIVOT И ТЕЛЕПОРТИРУЕМСЯ
+            -- obj:GetPivot() как раз берет WorldPivot и превращает в CFrame
+            local targetCFrame = obj:GetPivot()
+            HumanoidRootPart.CFrame = targetCFrame * CFrame.new(0, 5, 0) -- Телепорт чуть выше центра
+            task.wait(0.5) -- Ждем, чтобы сервер увидел нас рядом
+            
+            -- Ждем реакции сервера (макс 3 секунды)
+            local waitTime = 0
+            while currentTargetChestId ~= nil and waitTime < 3 do
+                task.wait(0.1)
+                waitTime = waitTime + 0.1
+            end
+            
+            if not chestOpenedSuccessfully then
+                -- Сундук не открылся (пустой или ошибка)
+                currentTargetChestId = nil
+            end
+            
+            task.wait(0.5)
+        end
+    end
+end
+
+print("Все обычные сундуки проверены! Фарм завершен.")
