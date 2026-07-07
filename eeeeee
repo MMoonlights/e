@@ -1,0 +1,120 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local ChestEvent = ReplicatedStorage:WaitForChild("Event").Backpack.ChestRemoteEvent
+local BackpackFunction = ReplicatedStorage.Event.Backpack.BackpackRemoteFunction
+
+local ChestFolder = workspace["\229\174\157\231\174\177"] -- Папка 宝物
+local SafeName = "\228\191\157\233\153\169\231\174\177"    -- Сейф 密码箱
+
+local player = Players.LocalPlayer
+local isProcessingChest = false
+local lootedChests = {} -- Запоминаем сундуки, чтобы не идти к ним повторно
+
+-- УНИВЕРСАЛЬНАЯ ФУНКЦИЯ НАЖАТИЯ (Взял из твоего старого рабочего скрипта)
+local function firePrompt(prompt)
+    if not prompt then return false end
+    if fireproximityprompt then
+        pcall(fireproximityprompt, prompt)
+    elseif fire_proximityprompt then
+        pcall(fire_proximityprompt, prompt)
+    else
+        -- Запасной метод, если эксплойт вообще не имеет функций для промптов
+        pcall(function()
+            prompt.HoldDuration = 0
+            prompt:InputHoldBegin()
+            task.wait(0.1)
+            prompt:InputHoldEnd()
+        end)
+    end
+    return true
+end
+
+-- СЛУШАТЕЛЬ ОТКРЫТИЯ СУНДУКА
+ChestEvent.OnClientEvent:Connect(function(action, data)
+    -- Если сервер прислал пароль — просто закрываем и игнорим
+    if action == "RequestSafePassword" then
+        pcall(function() BackpackFunction:InvokeServer("CloseChest") end)
+        return
+    end
+
+    -- Если сундук открылся нормально — забираем лут
+    if action == "OpenChest" and data then
+        isProcessingChest = true
+        task.spawn(function()
+            print("Сундук открыт! ID: " .. tostring(data.chestId))
+            
+            if data.items and #data.items > 0 then
+                for _, item in ipairs(data.items) do
+                    print("Забираю: " .. tostring(item.name))
+                    pcall(function()
+                        BackpackFunction:InvokeServer("TakeChestItem", data.chestId, item.id, "MyBackpackInventory")
+                    end)
+                    task.wait(0.1)
+                end
+            end
+            
+            task.wait(0.2)
+            pcall(function() BackpackFunction:InvokeServer("CloseChest") end)
+            
+            task.wait(0.5)
+            isProcessingChest = false
+            print("Готов к следующему сундуку.")
+        end)
+    end
+end)
+
+-- ОСНОВНОЙ ЦИКЛ ФАРМА
+print("Запуск авто-фермера...")
+
+while task.wait(0.5) do
+    pcall(function()
+        if not isProcessingChest then
+            local character = player.Character
+            if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+            local hrp = character.HumanoidRootPart
+
+            -- Идем по папке 宝物
+            for _, obj in ipairs(ChestFolder:GetChildren()) do
+                -- Если это не сейф и это Модель
+                if obj:IsA("Model") and obj.Name ~= SafeName then 
+                    local chestId = obj:GetAttribute("ChestId")
+                    
+                    -- Если у него есть ID и мы его ЕЩЕ НЕ ЛУТИЛИ
+                    if chestId and not lootedChests[chestId] then
+                        
+                        -- 1. Телепортация (используем твой метод с GetPivot)
+                        hrp.CFrame = obj:GetPivot() * CFrame.new(0, 3, 0)
+                        task.wait(0.5)
+                        
+                        -- 2. Ищем кнопку (ProximityPrompt) внутри сундука
+                        local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
+                        
+                        if prompt then
+                            -- 3. Нажимаем кнопку твоим рабочим методом
+                            firePrompt(prompt)
+                            
+                            -- 4. Ждем 2.5 секунды, пока сервер среагирует и скрипт положит лут
+                            local timeout = 0
+                            while not isProcessingChest and timeout < 2.5 do
+                                task.wait(0.1)
+                                timeout += 0.1
+                            end
+                        end
+                        
+                        -- 5. Добавляем в черный список (даже если он пустой, чтобы больше к нему не возвращаться)
+                        lootedChests[chestId] = true
+                        
+                        if not isProcessingChest then
+                            print("Не удалось открыть сундук (пустой или ошибка). Скип.")
+                        end
+                        
+                        -- ВАЖНО: Делаем break, чтобы скрипт не телепортировался к 10 сундукам за 1 секунду
+                        -- Он выйдет из цикла, подождет полсекунды (в начале while) и пойдет к следующему
+                        break 
+                    end
+                end
+            end
+        end
+    end)
+end
