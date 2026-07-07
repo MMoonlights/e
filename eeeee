@@ -5,9 +5,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ChestRemoteEvent = ReplicatedStorage:WaitForChild("Event"):WaitForChild("Backpack"):WaitForChild("ChestRemoteEvent")
 local BackpackRemoteFunction = ReplicatedStorage:WaitForChild("Event"):WaitForChild("Backpack"):WaitForChild("BackpackRemoteFunction")
 
--- Твои пути
 local ChestFolder = workspace["\229\174\157\231\174\177"] -- Папка "宝物"
-local SafeName = "\228\191\157\233\153\169\231\174\177"    -- Название сейфа "密码箱"
+local SafeName = "\228\191\157\233\153\169\231\174\177"    -- Сейф "密码箱"
 
 local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
@@ -15,19 +14,17 @@ local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 local currentTargetChestId = nil 
 local chestOpenedSuccessfully = false
 
--- УШИ: Слушаем сервер (на всякий случай оставляю скип по паролю, если найдутся другие)
+-- УШИ
 ChestRemoteEvent.OnClientEvent:Connect(function(action, data)
     if not data or not data.chestId then return end
     if data.chestId ~= currentTargetChestId then return end
 
-    -- Если вдруг какой-то другой сундук попросит пароль
     if action == "RequestSafePassword" then
         pcall(function() BackpackRemoteFunction:InvokeServer("CloseChest") end)
         currentTargetChestId = nil
         return
     end
 
-    -- Если сундук нормально открылся
     if action == "OpenChest" then
         print("Сундук открыт! Забираю лут...")
         chestOpenedSuccessfully = true
@@ -50,12 +47,10 @@ ChestRemoteEvent.OnClientEvent:Connect(function(action, data)
 end)
 
 -- ОСНОВНОЙ ЦИКЛ ФАРМА
-print("Запуск фермера. Сейфы ("..SafeName..") будут полностью игнорироваться.")
+print("Запуск фермера...")
 
 for _, obj in ipairs(ChestFolder:GetChildren()) do
     
-    -- Проверяем: это модель? И её название НЕ "Сейф"?
-    -- Если это сейф, код внутри просто не выполнится, мы прыгнем на следующий объект
     if obj:IsA("Model") and obj.Name ~= SafeName then 
         
         local chestId = obj:GetAttribute("ChestId")
@@ -64,13 +59,39 @@ for _, obj in ipairs(ChestFolder:GetChildren()) do
             currentTargetChestId = chestId
             chestOpenedSuccessfully = false
             
-            -- БЕРЕМ WORLDPIVOT И ТЕЛЕПОРТИРУЕМСЯ
-            -- obj:GetPivot() как раз берет WorldPivot и превращает в CFrame
+            -- 1. Телепортируемся
             local targetCFrame = obj:GetPivot()
-            HumanoidRootPart.CFrame = targetCFrame * CFrame.new(0, 5, 0) -- Телепорт чуть выше центра
-            task.wait(0.5) -- Ждем, чтобы сервер увидел нас рядом
+            HumanoidRootPart.CFrame = targetCFrame * CFrame.new(0, 5, 0)
+            task.wait(0.5) 
             
-            -- Ждем реакции сервера (макс 3 секунды)
+            -- 2. АВТОМАТИЧЕСКОЕ НАЖАТИЕ КНОПКИ
+            local interacted = false
+            
+            -- Ищем кнопку "Нажми E" (ProximityPrompt)
+            local prompt = obj:FindFirstChildOfClass("ProximityPrompt")
+            if prompt then
+                print("Нажимаю кнопку взаимодействия (E)...")
+                firesignal(prompt.Triggered)
+                interacted = true
+            end
+            
+            -- Если кнопки E нет, ищем кликабельность мышкой (ClickDetector)
+            if not interacted then
+                for _, v in ipairs(obj:GetDescendants()) do
+                    if v:IsA("ClickDetector") then
+                        print("Кликаю по сундуку мышкой...")
+                        firesignal(v.MouseClick)
+                        interacted = true
+                        break
+                    end
+                end
+            end
+            
+            if not interacted then
+                print("Кнопка не найдена, жду автооткрытия...")
+            end
+            
+            -- 3. Ждем реакции сервера
             local waitTime = 0
             while currentTargetChestId ~= nil and waitTime < 3 do
                 task.wait(0.1)
@@ -78,7 +99,7 @@ for _, obj in ipairs(ChestFolder:GetChildren()) do
             end
             
             if not chestOpenedSuccessfully then
-                -- Сундук не открылся (пустой или ошибка)
+                warn("Сундук не открылся.")
                 currentTargetChestId = nil
             end
             
@@ -87,4 +108,4 @@ for _, obj in ipairs(ChestFolder:GetChildren()) do
     end
 end
 
-print("Все обычные сундуки проверены! Фарм завершен.")
+print("Фарм завершен!")
