@@ -3,21 +3,22 @@ local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 
 local ChestEvent = ReplicatedStorage:WaitForChild("Event").Backpack.ChestRemoteEvent
-local BackpackEvent = ReplicatedStorage.Event.Backpack.BackpackRemoteEvent
 local BackpackFunction = ReplicatedStorage.Event.Backpack.BackpackRemoteFunction
 
 local player = Players.LocalPlayer
-local currentChestId = nil
 local isProcessingChest = false
-local chestsOpened = 0
-local itemsCollected = 0
+local lootedChests = {}
 
 local function collectAllItems(chestId, items)
-    if not items or isProcessingChest then return end
+    if not items then return end
     
-    isProcessingChest = true
     print("Chest opened. Starting collection. ID: " .. tostring(chestId))
-    print("Items found: " .. #items)
+    
+    if #items == 0 then
+        print("Chest is empty.")
+    else
+        print("Items found: " .. #items)
+    end
     
     for index, item in ipairs(items) do
         print("Collecting item " .. index .. "/" .. #items .. ": " .. tostring(item.name))
@@ -32,7 +33,6 @@ local function collectAllItems(chestId, items)
         end)
         
         if success then
-            itemsCollected = itemsCollected + 1
             print("Successfully collected: " .. tostring(item.name))
         else
             print("Failed to collect " .. tostring(item.name) .. ": " .. tostring(result))
@@ -44,70 +44,65 @@ local function collectAllItems(chestId, items)
     print("Closing chest...")
     task.wait(0.2)
     
-    local closeSuccess, closeResult = pcall(function()
+    pcall(function()
         return BackpackFunction:InvokeServer("CloseChest")
     end)
     
-    if closeSuccess then
-        chestsOpened = chestsOpened + 1
-        print("Chest closed. Total opened: " .. chestsOpened)
-        currentChestId = nil
-    else
-        print("Failed to close chest: " .. tostring(closeResult))
-    end
-    
+    print("Chest closed.")
     task.wait(0.5)
     isProcessingChest = false
     print("Ready for next chest")
 end
 
-for _, Connection in pairs(getconnections(ChestEvent.OnClientEvent)) do
-    if Connection.Function then
-        local old = hookfunction(Connection.Function, function(...)
-            local args = {...}
-            local eventType = args[1]
-            local eventData = args[2]
-            
-            if eventType == "OpenChest" and eventData then
-                currentChestId = eventData.chestId
-                task.spawn(function()
-                    local s, e = pcall(collectAllItems, eventData.chestId, eventData.items)
-                    if not s then
-                        print("Collection error: " .. tostring(e))
-                        isProcessingChest = false
-                    end
-                end)
+ChestEvent.OnClientEvent:Connect(function(eventType, eventData)
+    if eventType == "OpenChest" and eventData then
+        isProcessingChest = true
+        task.spawn(function()
+            local s, e = pcall(collectAllItems, eventData.chestId, eventData.items)
+            if not s then
+                print("Collection error: " .. tostring(e))
+                isProcessingChest = false
             end
-            
-            return old(...)
         end)
     end
-end
+end)
 
 local function findChest()
-    local closestChest = nil
+    local closestChestPart = nil
     local closestDist = math.huge
     local closestPrompt = nil
+    local closestParent = nil
     
     for _, object in ipairs(Workspace:GetDescendants()) do
-        if object:IsA("Model") or object:IsA("BasePart") then
-            local lowerName = string.lower(object.Name)
-            if string.find(lowerName, "chest") then
-                local character = player.Character
-                if character and character:FindFirstChild("HumanoidRootPart") then
-                    local distance = (character.HumanoidRootPart.Position - object:GetPivot().Position).Magnitude
-                    
-                    if distance < closestDist then
-                        closestDist = distance
-                        closestChest = object
-                        closestPrompt = object:FindFirstChildWhichIsA("ProximityPrompt", true)
-                    end
+        local isChest = false
+        local targetPart = nil
+        local parentObj = nil
+        
+        if object:IsA("BasePart") and string.find(string.lower(object.Name), "chest") then
+            isChest = true
+            targetPart = object
+            parentObj = object
+        elseif object:IsA("Model") and string.find(string.lower(object.Name), "chest") then
+            isChest = true
+            targetPart = object.PrimaryPart or object:FindFirstChildWhichIsA("BasePart")
+            parentObj = object
+        end
+        
+        if isChest and targetPart and not lootedChests[parentObj] then
+            local character = player.Character
+            if character and character:FindFirstChild("HumanoidRootPart") then
+                local distance = (character.HumanoidRootPart.Position - targetPart.Position).Magnitude
+                if distance < closestDist then
+                    closestDist = distance
+                    closestChestPart = targetPart
+                    closestPrompt = parentObj:FindFirstChildWhichIsA("ProximityPrompt", true)
+                    closestParent = parentObj
                 end
             end
         end
     end
     
-    return closestChest, closestPrompt, closestDist
+    return closestChestPart, closestPrompt, closestDist, closestParent
 end
 
 task.spawn(function()
@@ -116,20 +111,22 @@ task.spawn(function()
     while true do
         pcall(function()
             if not isProcessingChest then
-                local chestObject, prompt, dist = findChest()
+                local chestPart, prompt, dist, chestParent = findChest()
                 
-                if chestObject then
+                if chestPart and chestParent then
                     print("Chest found. Distance: " .. math.floor(dist))
                     local character = player.Character
                     
                     if character and character:FindFirstChild("HumanoidRootPart") then
-                        character.HumanoidRootPart.CFrame = chestObject:GetPivot() * CFrame.new(0, 3, 0)
+                        character.HumanoidRootPart.CFrame = chestPart.CFrame * CFrame.new(0, 3, 0)
                         task.wait(0.5)
                         
                         if prompt then
                             print("Activating prompt...")
                             if fireproximityprompt then
                                 pcall(fireproximityprompt, prompt)
+                            elseif fire_proximityprompt then
+                                pcall(fire_proximityprompt, prompt)
                             else
                                 pcall(function()
                                     prompt.HoldDuration = 0
@@ -147,7 +144,11 @@ task.spawn(function()
                         end
                         
                         if not isProcessingChest then
-                            print("Failed to open chest. Searching for another...")
+                            print("Failed to open chest. Blacklisting it.")
+                            lootedChests[chestParent] = true
+                        else
+                            print("Chest successfully opened. Blacklisting to prevent re-looting.")
+                            lootedChests[chestParent] = true
                         end
                     end
                 end
