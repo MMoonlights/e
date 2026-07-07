@@ -1,0 +1,376 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local ChestEvent = ReplicatedStorage:WaitForChild("Event").Backpack.ChestRemoteEvent
+local BackpackFunction = ReplicatedStorage.Event.Backpack.BackpackRemoteFunction
+
+local ChestFolder = workspace["\229\174\157\231\174\177"]
+local SafeName = "\228\191\157\233\153\169\231\174\177"
+
+local player = Players.LocalPlayer
+local isProcessingChest = false
+local isInventoryFull = false
+local lootedChests = {}
+
+local settings = {
+    coinsMode = "Greater",
+    coinsValue = 0,
+    capMode = "Greater",
+    capValue = 0,
+    selectedRarities = {0, 1, 2, 3, 4, 5}
+}
+
+local rarityNames = {"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"}
+
+local function shouldTakeItem(item)
+    local rarity = item.rare or 0
+    local coin = item.coin or 0
+    local cap = item.useCapacity or 0
+
+    if not table.find(settings.selectedRarities, rarity) then return false end
+
+    if settings.coinsValue > 0 then
+        if settings.coinsMode == "Greater" and coin < settings.coinsValue then return false end
+        if settings.coinsMode == "Less" and coin > settings.coinsValue then return false end
+    end
+
+    if settings.capValue > 0 then
+        if settings.capMode == "Greater" and cap < settings.capValue then return false end
+        if settings.capMode == "Less" and cap > settings.capValue then return false end
+    end
+
+    return true
+end
+
+local function firePrompt(prompt)
+    if not prompt then return false end
+    if fireproximityprompt then pcall(fireproximityprompt, prompt)
+    elseif fire_proximityprompt then pcall(fire_proximityprompt, prompt)
+    else pcall(function() prompt.HoldDuration = 0 prompt:InputHoldBegin() task.wait(0.1) prompt:InputHoldEnd() end) end
+    return true
+end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "SmartChestFarm"
+gui.ResetOnSpawn = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = game:GetService("CoreGui")
+
+local main = Instance.new("Frame")
+main.Size = UDim2.new(0, 280, 0, 380)
+main.Position = UDim2.new(0, 20, 0.5, -190)
+main.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+main.BorderSizePixel = 0
+main.Active = true
+main.Draggable = true
+main.Parent = gui
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 8)
+Instance.new("UIStroke", main).Color = Color3.fromRGB(100, 100, 120)
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 35)
+title.BackgroundTransparency = 1
+title.Text = "Chest Auto Farm"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 16
+title.Parent = main
+
+local scroll = Instance.new("Frame")
+scroll.Size = UDim2.new(1, -20, 1, -145)
+scroll.Position = UDim2.new(0, 10, 0, 40)
+scroll.BackgroundTransparency = 1
+scroll.Parent = main
+local layout = Instance.new("UIListLayout")
+layout.Padding = UDim.new(0, 8)
+layout.Parent = scroll
+
+local ddFrame = Instance.new("Frame")
+ddFrame.Size = UDim2.new(1, 0, 0, 30)
+ddFrame.BackgroundTransparency = 1
+ddFrame.Parent = scroll
+
+local ddBtn = Instance.new("TextButton")
+ddBtn.Size = UDim2.new(1, 0, 0, 25)
+ddBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+ddBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+ddBtn.Font = Enum.Font.Gotham
+ddBtn.TextSize = 12
+ddBtn.Text = "All Rarities"
+ddBtn.TextXAlignment = Enum.TextXAlignment.Left
+ddBtn.Parent = ddFrame
+Instance.new("UICorner", ddBtn).CornerRadius = UDim.new(0, 4)
+Instance.new("UIPadding", ddBtn).PaddingLeft = UDim.new(0, 10)
+
+local ddList = Instance.new("Frame")
+ddList.Size = UDim2.new(1, 0, 0, 0)
+ddList.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+ddList.Position = UDim2.new(0, 0, 1, 2)
+ddList.Visible = false
+ddList.ZIndex = 10
+ddList.Parent = ddBtn
+Instance.new("UICorner", ddList).CornerRadius = UDim.new(0, 4)
+local ddListLayout = Instance.new("UIListLayout")
+ddListLayout.Padding = UDim.new(0, 2)
+ddListLayout.Parent = ddList
+
+local function updateDdText()
+    if #settings.selectedRarities == 6 then
+        ddBtn.Text = "All Rarities"
+    else
+        local txt = ""
+        for _, i in ipairs(settings.selectedRarities) do
+            txt = txt .. rarityNames[i+1] .. ", "
+        end
+        ddBtn.Text = txt:sub(1, -3)
+    end
+
+    ddList.Size = UDim2.new(1, 0, 0, #rarityNames * 22)
+end
+
+for i, name in ipairs(rarityNames) do
+    local rb = Instance.new("TextButton")
+    rb.Size = UDim2.new(1, -10, 0, 20)
+    rb.Position = UDim2.new(0, 5, 0, 0)
+    rb.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
+    rb.TextColor3 = table.find(settings.selectedRarities, i-1) and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(150, 150, 150)
+    rb.Font = Enum.Font.Gotham
+    rb.TextSize = 11
+    rb.Text = "✓ " .. name
+    rb.TextXAlignment = Enum.TextXAlignment.Left
+    rb.ZIndex = 11
+    rb.Parent = ddList
+    Instance.new("UIPadding", rb).PaddingLeft = UDim.new(0, 5)
+
+    rb.MouseButton1Click:Connect(function()
+        local idx = i - 1
+        if table.find(settings.selectedRarities, idx) then
+            table.remove(settings.selectedRarities, table.find(settings.selectedRarities, idx))
+            rb.Text = "  " .. name
+            rb.TextColor3 = Color3.fromRGB(150, 150, 150)
+        else
+            table.insert(settings.selectedRarities, idx)
+            rb.Text = "✓ " .. name
+            rb.TextColor3 = Color3.fromRGB(100, 255, 100)
+        end
+        updateDdText()
+    end)
+end
+
+ddBtn.MouseButton1Click:Connect(function()
+    ddList.Visible = not ddList.Visible
+end)
+
+local function createFilterRow(labelText, defaultMode)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0, 30)
+    row.BackgroundTransparency = 1
+    row.Parent = scroll
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0, 50, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = labelText
+    label.TextColor3 = Color3.fromRGB(200, 200, 200)
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 12
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = row
+
+    local modeBtn = Instance.new("TextButton")
+    modeBtn.Size = UDim2.new(0, 70, 0, 25)
+    modeBtn.Position = UDim2.new(0, 55, 0, 2)
+    modeBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    modeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    modeBtn.Font = Enum.Font.Gotham
+    modeBtn.TextSize = 11
+    modeBtn.Text = defaultMode == "Greater" and "> Больше" or "< Меньше"
+    modeBtn.Parent = row
+    Instance.new("UICorner", modeBtn).CornerRadius = UDim.new(0, 4)
+
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(0, 60, 0, 25)
+    box.Position = UDim2.new(0, 130, 0, 2)
+    box.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    box.TextColor3 = Color3.fromRGB(255, 255, 255)
+    box.Font = Enum.Font.Gotham
+    box.TextSize = 12
+    box.PlaceholderText = "0 = Any"
+    box.Text = "0"
+    box.Parent = row
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
+
+    return modeBtn, box
+end
+
+local coinModeBtn, coinBox = createFilterRow("Coins:", "Greater")
+local capModeBtn, capBox = createFilterRow("Weight:", "Greater")
+
+coinModeBtn.MouseButton1Click:Connect(function()
+    settings.coinsMode = settings.coinsMode == "Greater" and "Less" or "Greater"
+    coinModeBtn.Text = settings.coinsMode == "Greater" and "> Больше" or "< Меньше"
+end)
+coinBox.FocusLost:Connect(function() settings.coinsValue = tonumber(coinBox.Text) or 0 end)
+
+capModeBtn.MouseButton1Click:Connect(function()
+    settings.capMode = settings.capMode == "Greater" and "Less" or "Greater"
+    capModeBtn.Text = settings.capMode == "Greater" and "> Больше" or "< Меньше"
+end)
+capBox.FocusLost:Connect(function() settings.capValue = tonumber(capBox.Text) or 0 end)
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, -20, 0, 20)
+statusLabel.Position = UDim2.new(0, 10, 1, -70)
+statusLabel.BackgroundTransparency = 1
+statusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.TextSize = 12
+statusLabel.Text = "Status: Idle"
+statusLabel.Parent = main
+
+local extractBtn = Instance.new("TextButton")
+extractBtn.Size = UDim2.new(0.48, 0, 0, 30)
+extractBtn.Position = UDim2.new(0.02, 10, 1, -95)
+extractBtn.BackgroundColor3 = Color3.fromRGB(60, 120, 200)
+extractBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+extractBtn.Font = Enum.Font.GothamBold
+extractBtn.TextSize = 12
+extractBtn.Text = "Teleport to Extract"
+extractBtn.Parent = main
+Instance.new("UICorner", extractBtn).CornerRadius = UDim.new(0, 6)
+
+local farmBtn = Instance.new("TextButton")
+farmBtn.Size = UDim2.new(0.48, 0, 0, 30)
+farmBtn.Position = UDim2.new(0.5, 0, 1, -95)
+farmBtn.BackgroundColor3 = Color3.fromRGB(80, 200, 120)
+farmBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+farmBtn.Font = Enum.Font.GothamBold
+farmBtn.TextSize = 14
+farmBtn.Text = "Start Farming"
+farmBtn.Parent = main
+Instance.new("UICorner", farmBtn).CornerRadius = UDim.new(0, 6)
+
+local isFarming = false
+
+local function updateStatus(msg, color)
+    statusLabel.Text = "Status: " .. msg
+    statusLabel.TextColor3 = color or Color3.fromRGB(150, 150, 150)
+end
+
+farmBtn.MouseButton1Click:Connect(function()
+    isFarming = not isFarming
+    if isFarming then
+        isInventoryFull = false
+        farmBtn.Text = "Stop Farming"
+        farmBtn.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
+        updateStatus("Farming...", Color3.fromRGB(80, 255, 80))
+    else
+        farmBtn.Text = "Start Farming"
+        farmBtn.BackgroundColor3 = Color3.fromRGB(80, 200, 120)
+        updateStatus("Stopped", Color3.fromRGB(255, 255, 255))
+    end
+end)
+
+extractBtn.MouseButton1Click:Connect(function()
+    local epFolder = workspace:FindFirstChild("ExtractionPointFolder")
+    if epFolder then
+        for _, obj in ipairs(epFolder:GetChildren()) do
+            local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
+            if part then
+                local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    hrp.CFrame = part.CFrame * CFrame.new(0, 3, 0)
+                    updateStatus("Extracted!", Color3.fromRGB(100, 200, 255))
+                end
+                break
+            end
+        end
+    else
+        updateStatus("Extract not found!", Color3.fromRGB(255, 80, 80))
+    end
+end)
+
+ChestEvent.OnClientEvent:Connect(function(action, data)
+    if not isFarming then return end
+    if not data or not data.chestId then return end
+    
+    if action == "RequestSafePassword" then
+        pcall(function() BackpackFunction:InvokeServer("CloseChest") end)
+        return
+    end
+
+    if action == "OpenChest" then
+        isProcessingChest = true
+        updateStatus("Looting chest...", Color3.fromRGB(255, 255, 0))
+        
+        task.spawn(function()
+            if data.items and #data.items > 0 then
+                for _, item in ipairs(data.items) do
+                    if isInventoryFull then break end
+                    
+                    if shouldTakeItem(item) then
+                        local ok, res1, res2 = pcall(function()
+                            return BackpackFunction:InvokeServer("TakeChestItem", data.chestId, item.id, "MyBackpackInventory")
+                        end)
+                        
+                        if ok and res1 == false and res2 == "Capacity exceeded" then
+                            isInventoryFull = true
+                            isFarming = false
+                            farmBtn.Text = "Start Farming"
+                            farmBtn.BackgroundColor3 = Color3.fromRGB(80, 200, 120)
+                            updateStatus("INVENTORY FULL!", Color3.fromRGB(255, 50, 50))
+                            break
+                        end
+
+                        task.wait(0.25) 
+                    end
+                end
+            end
+            
+            task.wait(0.3)
+            pcall(function() BackpackFunction:InvokeServer("CloseChest") end)
+            task.wait(0.5)
+            isProcessingChest = false
+            if isFarming then updateStatus("Farming...", Color3.fromRGB(80, 255, 80)) end
+        end)
+    end
+end)
+
+while task.wait(0.5) do
+    pcall(function()
+        if isFarming and not isInventoryFull and not isProcessingChest then
+            local character = player.Character
+            if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+            local hrp = character.HumanoidRootPart
+
+            for _, obj in ipairs(ChestFolder:GetChildren()) do
+                if obj:IsA("Model") and obj.Name ~= SafeName then 
+                    local chestId = obj:GetAttribute("ChestId")
+                    
+                    if chestId and not lootedChests[chestId] then
+                        hrp.CFrame = obj:GetPivot() * CFrame.new(0, 3, 0)
+                        task.wait(0.5)
+                        
+                        local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
+                        if prompt then
+                            firePrompt(prompt)
+                            
+                            local timeout = 0
+                            while not isProcessingChest and timeout < 3 do
+                                task.wait(0.1)
+                                timeout += 0.1
+                            end
+                        end
+                        
+                        while isProcessingChest do
+                            task.wait(0.1)
+                        end
+                        
+                        lootedChests[chestId] = true
+                        break 
+                    end
+                end
+            end
+        end
+    end)
+end
