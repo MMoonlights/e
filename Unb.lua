@@ -47,14 +47,13 @@ task.spawn(function()
 
     if boxesOk and type(boxesResult) == "table" then
         BoxesAPI = boxesResult
+        print("[Success] Boxes API loaded")
     else
         warn("[Loader] Failed to load Boxes module:", boxesResult)
     end
 
-    RE = ReplicatedStorage:WaitForChild("RE")
-    RF = ReplicatedStorage:WaitForChild("RF")
-
-    print("[Success] Boxes API, RE, and RF loaded successfully!")
+    RE = ReplicatedStorage:FindFirstChild("RE")
+    RF = ReplicatedStorage:FindFirstChild("RF")
 end)
 
 MainTab:Label("MAIN STATS", "rbxassetid://7733960981")
@@ -67,14 +66,32 @@ MainTab:Label("Boxes", "rbxassetid://7733752575")
 
 local autoAttackBoxes = false
 local attackDelay = 0.1
-local attackBatchSize = 100
+local attackRange = 27
+local attackBatchSize = 30
 local currentFieldId = nil
 local fieldList = {}
+local fieldsById = {}
+local fieldGenerations = {}
 local activeBoxes = {}
-local attackOffsets = {}
 local listenersReady = false
 local lastSubscribeAt = 0
 local lastStatusAt = 0
+
+local function readSigned8(value)
+    if value >= 128 then
+        return value - 256
+    end
+
+    return value
+end
+
+local function readSigned16(value)
+    if value >= 32768 then
+        return value - 65536
+    end
+
+    return value
+end
 
 local function getFieldBoxes(fieldId)
     fieldId = tonumber(fieldId)
@@ -93,31 +110,74 @@ local function getFieldBoxes(fieldId)
     return boxes
 end
 
-local function setBoxState(fieldId, boxId, enabled)
+local function removeBox(fieldId, boxId)
     fieldId = tonumber(fieldId)
     boxId = tonumber(boxId)
 
-    if fieldId == nil or boxId == nil then
-        return
-    end
+    local boxes = fieldId and activeBoxes[fieldId]
 
-    local boxes = getFieldBoxes(fieldId)
-
-    if enabled then
-        boxes[boxId] = true
-    else
+    if boxes and boxId then
         boxes[boxId] = nil
     end
 end
 
-local function collectBoxIds(fieldId, value, seen)
+local function decodeStaticBox(fieldId, value, offset)
+    fieldId = tonumber(fieldId)
+    offset = offset or 0
+
+    if fieldId == nil
+        or typeof(value) ~= "buffer"
+        or buffer.len(value) < offset + 19
+    then
+        return
+    end
+
+    local boxId = buffer.readu32(value, offset)
+    local localX = readSigned16(buffer.readu16(value, offset + 9))
+    local localY = readSigned8(buffer.readu8(value, offset + 11))
+    local localZ = readSigned16(buffer.readu16(value, offset + 12))
+    local field = fieldsById[fieldId]
+    local worldPosition = nil
+
+    if field and typeof(field.Position) == "Vector3" then
+        worldPosition = field.Position + Vector3.new(
+            localX,
+            localY,
+            localZ
+        )
+    end
+
+    getFieldBoxes(fieldId)[boxId] = {
+        Id = boxId,
+        LocalPosition = Vector3.new(localX, localY, localZ),
+        Position = worldPosition
+    }
+end
+
+local function decodeStaticBuffer(fieldId, value)
+    if typeof(value) ~= "buffer" then
+        return
+    end
+
+    local length = buffer.len(value)
+
+    if length == 19 then
+        decodeStaticBox(fieldId, value, 0)
+        return
+    end
+
+    if length > 19 and length % 19 == 0 then
+        for offset = 0, length - 19, 19 do
+            decodeStaticBox(fieldId, value, offset)
+        end
+    end
+end
+
+local function collectBoxState(fieldId, value, seen)
     local valueType = typeof(value)
 
     if valueType == "buffer" then
-        if buffer.len(value) >= 4 then
-            setBoxState(fieldId, buffer.readu32(value, 0), true)
-        end
-
+        decodeStaticBuffer(fieldId, value)
         return
     end
 
@@ -127,15 +187,17 @@ local function collectBoxIds(fieldId, value, seen)
 
     seen[value] = true
 
-    local boxId = value.boxId or value.BoxId
+    local boxId = tonumber(value.boxId or value.BoxId)
     local kind = value.kind or value.Kind
 
-    if boxId ~= nil then
-        setBoxState(fieldId, boxId, kind ~= "Remove")
+    if boxId ~= nil and kind == "Remove" then
+        removeBox(fieldId, boxId)
+    elseif boxId ~= nil and typeof(value.static) == "buffer" then
+        decodeStaticBuffer(fieldId, value.static)
     end
 
     for _, item in pairs(value) do
-        collectBoxIds(fieldId, item, seen)
+        collectBoxState(fieldId, item, seen)
     end
 
     seen[value] = nil
@@ -154,17 +216,25 @@ local function countBoxes(fieldId)
     return count
 end
 
-local function findNearestField()
+local function getRootPart()
     local character = LocalPlayer.Character
-    local rootPart = character and (
+
+    return character and (
         character:FindFirstChild("HumanoidRootPart")
         or character.PrimaryPart
     )
+end
+
+local function findCurrentField()
+    local rootPart = getRootPart()
 
     if not rootPart then
         return nil
     end
 
+    local position = rootPart.Position
+    local containedId = nil
+    local containedDistance = math.huge
     local nearestId = nil
     local nearestDistance = math.huge
 
@@ -173,16 +243,31 @@ local function findNearestField()
             and tonumber(field.Id) ~= nil
             and typeof(field.Position) == "Vector3"
         then
-            local distance = (rootPart.Position - field.Position).Magnitude
+            local fieldId = tonumber(field.Id)
+            local delta = position - field.Position
+            local distance = Vector2.new(delta.X, delta.Z).Magnitude
 
             if distance < nearestDistance then
                 nearestDistance = distance
-                nearestId = tonumber(field.Id)
+                nearestId = fieldId
+            end
+
+            if typeof(field.Size) == "Vector3" then
+                local halfX = field.Size.X * 0.5 + 5
+                local halfZ = field.Size.Z * 0.5 + 5
+
+                if math.abs(delta.X) <= halfX
+                    and math.abs(delta.Z) <= halfZ
+                    and distance < containedDistance
+                then
+                    containedDistance = distance
+                    containedId = fieldId
+                end
             end
         end
     end
 
-    return nearestId
+    return containedId or nearestId
 end
 
 local function subscribeField(fieldId)
@@ -199,17 +284,26 @@ local function subscribeField(fieldId)
         return false
     end
 
+    local generation = fieldGenerations[fieldId] or 0
     local ok, result = pcall(function()
         BoxesAPI.FieldSubscribe.Fire({
-            fieldId = fieldId,
-            generation = 0
+            {
+                fieldId = fieldId,
+                generation = generation
+            }
         })
     end)
 
+    lastSubscribeAt = os.clock()
+
     if ok then
         currentFieldId = fieldId
-        lastSubscribeAt = os.clock()
-        print("[Boxes] Subscribed to field", fieldId)
+        print(
+            "[Boxes] Subscribed to field",
+            fieldId,
+            "generation",
+            generation
+        )
         return true
     end
 
@@ -227,17 +321,29 @@ local function loadFieldList()
 
     local ok, result = pcall(BoxesAPI.GetFieldList.Call)
 
-    if ok and type(result) == "table" then
-        fieldList = result
-
-        local nearestFieldId = findNearestField()
-
-        if nearestFieldId ~= nil then
-            currentFieldId = nearestFieldId
-            subscribeField(nearestFieldId)
-        end
-    elseif not ok then
+    if not ok then
         warn("[Boxes] GetFieldList failed:", result)
+        return
+    end
+
+    if type(result) ~= "table" then
+        return
+    end
+
+    fieldList = result
+    fieldsById = {}
+
+    for _, field in pairs(fieldList) do
+        if type(field) == "table" and tonumber(field.Id) ~= nil then
+            fieldsById[tonumber(field.Id)] = field
+        end
+    end
+
+    local fieldId = findCurrentField()
+
+    if fieldId ~= nil then
+        currentFieldId = fieldId
+        subscribeField(fieldId)
     end
 end
 
@@ -251,16 +357,25 @@ local function initializeBoxListeners()
     if type(BoxesAPI.FieldSync) == "table"
         and type(BoxesAPI.FieldSync.On) == "function"
     then
-        BoxesAPI.FieldSync.On(function(fieldId)
-            currentFieldId = tonumber(fieldId) or currentFieldId
-            getFieldBoxes(fieldId)
+        BoxesAPI.FieldSync.On(function(fieldId, generation)
+            fieldId = tonumber(fieldId)
+
+            if fieldId == nil then
+                return
+            end
+
+            currentFieldId = fieldId
+
+            if tonumber(generation) ~= nil then
+                fieldGenerations[fieldId] = tonumber(generation)
+            end
         end)
     end
 
     if type(BoxesAPI.FieldBaseline) == "table"
         and type(BoxesAPI.FieldBaseline.On) == "function"
     then
-        BoxesAPI.FieldBaseline.On(function(fieldId, ...)
+        BoxesAPI.FieldBaseline.On(function(fieldId, generation, ...)
             fieldId = tonumber(fieldId)
 
             if fieldId == nil then
@@ -270,10 +385,16 @@ local function initializeBoxListeners()
             currentFieldId = fieldId
             activeBoxes[fieldId] = {}
 
+            if tonumber(generation) ~= nil then
+                fieldGenerations[fieldId] = tonumber(generation)
+            end
+
+            collectBoxState(fieldId, generation, {})
+
             local arguments = table.pack(...)
 
             for index = 1, arguments.n do
-                collectBoxIds(fieldId, arguments[index], {})
+                collectBoxState(fieldId, arguments[index], {})
             end
 
             print(
@@ -287,7 +408,7 @@ local function initializeBoxListeners()
     if type(BoxesAPI.FieldDelta) == "table"
         and type(BoxesAPI.FieldDelta.On) == "function"
     then
-        BoxesAPI.FieldDelta.On(function(fieldId, _, changes)
+        BoxesAPI.FieldDelta.On(function(fieldId, generation, changes)
             fieldId = tonumber(fieldId)
 
             if fieldId == nil then
@@ -295,23 +416,19 @@ local function initializeBoxListeners()
             end
 
             currentFieldId = fieldId
-            collectBoxIds(fieldId, changes, {})
-        end)
-    end
 
-    if type(BoxesAPI.AttackState) == "table"
-        and type(BoxesAPI.AttackState.On) == "function"
-    then
-        BoxesAPI.AttackState.On(function(fieldId, boxId)
-            currentFieldId = tonumber(fieldId) or currentFieldId
-            setBoxState(fieldId, boxId, true)
+            if tonumber(generation) ~= nil then
+                fieldGenerations[fieldId] = tonumber(generation)
+            end
+
+            collectBoxState(fieldId, changes, {})
         end)
     end
 
     task.spawn(loadFieldList)
 end
 
-local function attackCurrentField()
+local function attackNearbyBoxes()
     if not autoAttackBoxes
         or not BoxesAPI
         or type(BoxesAPI.AttackBox) ~= "table"
@@ -320,66 +437,67 @@ local function attackCurrentField()
         return
     end
 
-    local nearestFieldId = findNearestField()
+    local rootPart = getRootPart()
 
-    if nearestFieldId ~= nil and nearestFieldId ~= currentFieldId then
-        currentFieldId = nearestFieldId
-        subscribeField(nearestFieldId)
+    if not rootPart then
+        return
     end
 
-    local fieldId = currentFieldId
+    local fieldId = findCurrentField()
+
+    if fieldId ~= nil and fieldId ~= currentFieldId then
+        currentFieldId = fieldId
+        subscribeField(fieldId)
+    end
+
+    fieldId = currentFieldId
 
     if fieldId == nil then
         return
     end
 
     local boxes = getFieldBoxes(fieldId)
-    local ids = {}
+    local nearby = {}
 
-    for boxId in pairs(boxes) do
-        table.insert(ids, boxId)
-    end
+    for boxId, box in pairs(boxes) do
+        if type(box) == "table"
+            and typeof(box.Position) == "Vector3"
+        then
+            local distance = (
+                rootPart.Position - box.Position
+            ).Magnitude
 
-    table.sort(ids)
-
-    if #ids == 0 then
-        if os.clock() - lastSubscribeAt >= 3 then
-            subscribeField(fieldId)
+            if distance <= attackRange then
+                table.insert(nearby, {
+                    Id = boxId,
+                    Distance = distance
+                })
+            end
         end
-
-        return
     end
 
-    local offset = attackOffsets[fieldId] or 1
+    table.sort(nearby, function(left, right)
+        return left.Distance < right.Distance
+    end)
 
-    if offset > #ids then
-        offset = 1
-    end
+    local attacked = math.min(#nearby, attackBatchSize)
 
-    local attacked = 0
-    local index = offset
-
-    while attacked < attackBatchSize and attacked < #ids do
-        local boxId = ids[index]
-
+    for index = 1, attacked do
         pcall(
             BoxesAPI.AttackBox.Fire,
             fieldId,
-            boxId,
+            nearby[index].Id,
             workspace:GetServerTimeNow()
         )
-
-        attacked += 1
-        index += 1
-
-        if index > #ids then
-            index = 1
-        end
 
         task.wait(0.01)
     end
 
-    attackOffsets[fieldId] = index
+    if #nearby == 0
+        and os.clock() - lastSubscribeAt >= 3
+    then
+        subscribeField(fieldId)
+    end
 
     if os.clock() - lastStatusAt >= 2 then
         lastStatusAt = os.clock()
@@ -388,7 +506,9 @@ local function attackCurrentField()
             "[Boxes] Field",
             fieldId,
             "tracked",
-            #ids,
+            countBoxes(fieldId),
+            "nearby",
+            #nearby,
             "attacked",
             attacked
         )
@@ -403,20 +523,31 @@ task.spawn(function()
     initializeBoxListeners()
 end)
 
-MainTab:Toggle("Auto Damage All Boxes", false, function(state)
+MainTab:Toggle("Auto Damage Nearby Boxes", false, function(state)
     autoAttackBoxes = state
 
     if state then
+        local fieldId = findCurrentField()
+
+        if fieldId ~= nil then
+            currentFieldId = fieldId
+            subscribeField(fieldId)
+        end
+
         task.spawn(function()
             while autoAttackBoxes do
-                attackCurrentField()
+                attackNearbyBoxes()
                 task.wait(attackDelay)
             end
         end)
     end
 end)
 
-MainTab:Slider("Attack Batch Size", 1, 200, 100, function(value)
+MainTab:Slider("Attack Range", 10, 28, 27, function(value)
+    attackRange = math.clamp(value, 10, 28)
+end)
+
+MainTab:Slider("Attack Batch Size", 1, 50, 30, function(value)
     attackBatchSize = math.max(1, math.floor(value))
 end)
 
