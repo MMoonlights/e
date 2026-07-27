@@ -11,22 +11,22 @@ local RunService = game:GetService("RunService")
 
 local UI_URL = "https://gist.githubusercontent.com/MjContiga1/7830931c94f8ba912103072abd21df0b/raw/b41e5d567895d11aacc4b419091d29b504c985c6/Bypass.lua"
 
-assert(type(loadstring) == "function", "[Loader] Этот исполнитель не поддерживает loadstring")
+assert(type(loadstring) == "function", "[Loader] This executor does not support loadstring")
 
 local httpOk, uiSource = pcall(function()
     return game:HttpGet(UI_URL)
 end)
 assert(httpOk and type(uiSource) == "string" and #uiSource > 0,
-    "[Loader] Не удалось скачать UI: " .. tostring(uiSource))
+    "[Loader] Failed to download UI: " .. tostring(uiSource))
 
 local uiChunk, compileError = loadstring(uiSource)
-assert(uiChunk, "[Loader] Ошибка компиляции UI: " .. tostring(compileError))
+assert(uiChunk, "[Loader] UI compilation error: " .. tostring(compileError))
 
 local libraryOk, Library = pcall(uiChunk)
 assert(libraryOk and type(Library) == "table",
-    "[Loader] Ошибка запуска UI: " .. tostring(Library))
+    "[Loader] UI execution error: " .. tostring(Library))
 
-print("[Loader] UI-библиотека загружена")
+print("[Loader] UI library loaded")
 
 local Window = Library:Window("Unboxing Simulator • By Mjcontegazxc", {UseScreenGui = true})
 local MainTab = Window:Tab({"Main", "rbxassetid://7733960981"})
@@ -43,34 +43,35 @@ local ZAPFolder = nil
 task.spawn(function()
     while not ReplicatedStorage:FindFirstChild("ZAP") do task.wait(0.5) end
     ZAPFolder = ReplicatedStorage:FindFirstChild("ZAP")
-    
+
     while not ZAPFolder:FindFirstChild("Boxes_RELIABLE") do task.wait(0.5) end
     BoxesZAP = ZAPFolder:FindFirstChild("Boxes_RELIABLE")
-    
+
     while not ReplicatedStorage:FindFirstChild("Controllers") do task.wait(0.5) end
     local controllers = ReplicatedStorage:FindFirstChild("Controllers")
-    
+
     while not controllers:FindFirstChild("BoxController") do task.wait(0.5) end
     local requireOk, controllerOrError = pcall(require, controllers:FindFirstChild("BoxController"))
     if requireOk then
         BoxController = controllerOrError
     else
-        warn("[Loader] BoxController не загрузился:", controllerOrError)
+        warn("[Loader] Failed to load BoxController:", controllerOrError)
     end
-    
+
     while not ReplicatedStorage:FindFirstChild("RE") do task.wait(0.5) end
     RE = ReplicatedStorage:FindFirstChild("RE")
-    
+
     while not ReplicatedStorage:FindFirstChild("RF") do task.wait(0.5) end
     RF = ReplicatedStorage:FindFirstChild("RF")
-    
-    print("[Success] ZAP, BoxController, RE и RF успешно загружены!")
+
+    print("[Success] ZAP, BoxController, RE, and RF loaded successfully!")
 end)
 
 MainTab:Label("MAIN STATS", "rbxassetid://7733960981")
 
-local TimeParagraph = MainTab:Paragraph("Текущее время появится здесь")
-local StatsParagraph = MainTab:Paragraph("Загрузка статистики...")
+local TimeParagraph = MainTab:Paragraph("Current time will appear here")
+
+local StatsParagraph = MainTab:Paragraph("Loading statistics...")
 
 MainTab:Label("Boxes", "rbxassetid://7733752575")
 
@@ -89,35 +90,31 @@ local function attackBox(fieldId, boxId)
 
     if type(buffer) ~= "table" or type(buffer.create) ~= "function" then
         if not bufferWarningShown then
-            warn("[Boxes] В этом исполнителе отсутствует Luau buffer API")
+            warn("[Boxes] This executor does not support the Luau buffer API")
             bufferWarningShown = true
         end
         return
     end
-    
+
     fieldId = tonumber(fieldId)
     boxId = tonumber(boxId)
     if not fieldId or not boxId then return end
-    
+
     local buf = buffer.create(17)
-    
-    -- Заголовок: \x00\x04
+
     buffer.writeu8(buf, 0, 0x00)
     buffer.writeu8(buf, 1, 0x04)
-    
-    -- Field ID (4 байта, Big Endian)
+
     buffer.writeu8(buf, 2, math.floor(fieldId / 16777216) % 256)
     buffer.writeu8(buf, 3, math.floor(fieldId / 65536) % 256)
     buffer.writeu8(buf, 4, math.floor(fieldId / 256) % 256)
     buffer.writeu8(buf, 5, fieldId % 256)
-    
-    -- Box ID (4 байта, Big Endian)
+
     buffer.writeu8(buf, 6, math.floor(boxId / 16777216) % 256)
     buffer.writeu8(buf, 7, math.floor(boxId / 65536) % 256)
     buffer.writeu8(buf, 8, math.floor(boxId / 256) % 256)
     buffer.writeu8(buf, 9, boxId % 256)
-    
-    -- Статичный хвост (7 байт)
+
     buffer.writeu8(buf, 10, 0xA4)
     buffer.writeu8(buf, 11, 0x1D)
     buffer.writeu8(buf, 12, 0xC1)
@@ -125,77 +122,181 @@ local function attackBox(fieldId, boxId)
     buffer.writeu8(buf, 14, 0x99)
     buffer.writeu8(buf, 15, 0xDA)
     buffer.writeu8(buf, 16, 0x41)
-    
+
     pcall(function()
         BoxesZAP:FireServer(buf, {})
     end)
 end
 
+local getBoxesCallMode = nil
+
+local function getBoxesInRadiusSafe(pos, range)
+    if type(BoxController) ~= "table" then
+        return false, nil, "BoxController is not a table"
+    end
+
+    local getBoxesFunction = BoxController.GetBoxesInRadius
+    if type(getBoxesFunction) ~= "function" then
+        return false, nil, "GetBoxesInRadius is missing or is not a function"
+    end
+
+    if getBoxesCallMode == "method" then
+        local ok, result = pcall(getBoxesFunction, BoxController, pos, range)
+        if ok then
+            return true, result
+        end
+        getBoxesCallMode = nil
+    elseif getBoxesCallMode == "static" then
+        local ok, result = pcall(getBoxesFunction, pos, range)
+        if ok then
+            return true, result
+        end
+        getBoxesCallMode = nil
+    end
+
+    local methodOk, methodResult = pcall(
+        getBoxesFunction,
+        BoxController,
+        pos,
+        range
+    )
+
+    if methodOk and (methodResult == nil or type(methodResult) == "table") then
+        getBoxesCallMode = "method"
+        print("[Debug] GetBoxesInRadius works with self")
+        return true, methodResult
+    end
+
+    local staticOk, staticResult = pcall(
+        getBoxesFunction,
+        pos,
+        range
+    )
+
+    if staticOk and (staticResult == nil or type(staticResult) == "table") then
+        getBoxesCallMode = "static"
+        print("[Debug] GetBoxesInRadius works without self")
+        return true, staticResult
+    end
+
+    return false, nil,
+        "with self: " .. tostring(methodResult)
+        .. " | without self: " .. tostring(staticResult)
+end
+
 local function attackNearbyBoxes()
-    if not autoAttackBoxes or not BoxController then return end
-    if not LocalPlayer.Character or not LocalPlayer.Character.PrimaryPart then return end
-    
-    local pos = LocalPlayer.Character.PrimaryPart.Position
-    
-    local success, boxes = pcall(function()
-        return BoxController.GetBoxesInRadius(pos, attackRange)
-    end)
-    
+    if not autoAttackBoxes or not BoxController then
+        return
+    end
+
+    local character = LocalPlayer.Character
+    local rootPart = character and (
+        character:FindFirstChild("HumanoidRootPart")
+        or character.PrimaryPart
+    )
+
+    if not rootPart then
+        return
+    end
+
+    local pos = rootPart.Position
+    local success, boxes, callError = getBoxesInRadiusSafe(pos, attackRange)
+
     if not success then
         if not missingIdLogged then
-            warn("[Debug] Ошибка BoxController.GetBoxesInRadius:", boxes)
+            warn("[Debug] GetBoxesInRadius failed:", callError)
+            warn("[Debug] The controller may not be initialized yet, or the game API has changed.")
             missingIdLogged = true
         end
         return
     end
-    
-    if not boxes or #boxes == 0 then
+
+    if type(boxes) ~= "table" or next(boxes) == nil then
         return
     end
-    
-    for _, box in ipairs(boxes) do
-        -- Логируем структуру бокса один раз, чтобы понять, какие там есть переменные
+
+    for _, box in pairs(boxes) do
         if not boxDebugLogged then
-            local keys = ""
-            for k, v in pairs(box) do keys = keys .. tostring(k) .. " (" .. typeof(v) .. "), " end
-            print("[Debug] Структура Box:", keys)
-            if box.Field then
-                local fkeys = ""
-                for k, v in pairs(box.Field) do fkeys = fkeys .. tostring(k) .. " (" .. typeof(v) .. "), " end
-                print("[Debug] Структура Box.Field:", fkeys)
+            if type(box) == "table" then
+                local keys = ""
+
+                for key, value in pairs(box) do
+                    keys = keys
+                        .. tostring(key)
+                        .. " ("
+                        .. typeof(value)
+                        .. "), "
+                end
+
+                print("[Debug] Box structure:", keys)
+
+                if type(box.Field) == "table" then
+                    local fieldKeys = ""
+
+                    for key, value in pairs(box.Field) do
+                        fieldKeys = fieldKeys
+                            .. tostring(key)
+                            .. " ("
+                            .. typeof(value)
+                            .. "), "
+                    end
+
+                    print("[Debug] Box.Field structure:", fieldKeys)
+                end
+            else
+                print("[Debug] Box type:", typeof(box), tostring(box))
             end
+
             boxDebugLogged = true
         end
-        
-        -- Пытаемся найти ID разными путями
+
         local fieldId = nil
-        if box.Field and box.Field.Id then fieldId = box.Field.Id
-        elseif box.FieldId then fieldId = box.FieldId
-        elseif box.Field and box.Field.FieldId then fieldId = box.Field.FieldId
+        local boxId = nil
+        local boxCFrame = nil
+
+        if type(box) == "table" then
+            if type(box.Field) == "table" and box.Field.Id then
+                fieldId = box.Field.Id
+            elseif box.FieldId then
+                fieldId = box.FieldId
+            elseif type(box.Field) == "table" and box.Field.FieldId then
+                fieldId = box.Field.FieldId
+            end
+
+            boxId = box.Id or box.BoxId
+            boxCFrame = box.CFrame
+        elseif typeof(box) == "Instance" then
+            fieldId = box:GetAttribute("FieldId")
+                or box:GetAttribute("FieldID")
+
+            boxId = box:GetAttribute("Id")
+                or box:GetAttribute("BoxId")
+
+            if box:IsA("BasePart") then
+                boxCFrame = box.CFrame
+            elseif box:IsA("Model") then
+                boxCFrame = box:GetPivot()
+            end
         end
-        
-        local boxId = box.Id
-        
-        if fieldId and boxId then
-            if (pos - box.CFrame.Position).Magnitude <= attackRange then
+
+        if fieldId and boxId and typeof(boxCFrame) == "CFrame" then
+            if (pos - boxCFrame.Position).Magnitude <= attackRange then
                 attackBox(fieldId, boxId)
                 task.wait(0.05)
             end
-        else
-            if not missingIdLogged then
-                warn("[Debug] Не удалось найти Field ID или Box ID у объекта. Проверьте консоль (F9).")
-                missingIdLogged = true
-            end
+        elseif not missingIdLogged then
+            warn("[Debug] Field ID, Box ID, or CFrame was not found.")
+            missingIdLogged = true
         end
     end
 end
 
 MainTab:Toggle("Auto Damage All Boxes", false, function(state)
     autoAttackBoxes = state
-    boxDebugLogged = false -- Сбрасываем лог при включении
+    boxDebugLogged = false
     missingIdLogged = false
     if state then
-        print("[Debug] Auto Attack Boxes ВКЛЮЧЕН. Ищем боксы...")
+        print("[Debug] Auto Attack Boxes enabled. Searching for boxes...")
         task.spawn(function()
             while autoAttackBoxes do
                 attackNearbyBoxes()
@@ -210,7 +311,6 @@ MainTab:Slider("Attack Range", 10, 100, 50, function(value)
 end)
 
 MainTab:Slider("Attack Delay (ms)", 50, 2000, 100, function(value)
-    -- UI округляет значения до целых, поэтому используем миллисекунды.
     attackSpeed = math.max(value / 1000, 0.05)
 end)
 
@@ -226,10 +326,10 @@ local function buyAllWeapons()
     if not RF then return end
     local purchaseRemote = RF:FindFirstChild("PurchaseItem")
     if not purchaseRemote then return end
-    
+
     local areas = workspace:FindFirstChild("Areas")
     if not areas then return end
-    
+
     for _, area in pairs(areas:GetChildren()) do
         local weaponsFolder = area:FindFirstChild("Weapons")
         if weaponsFolder then
@@ -254,7 +354,6 @@ task.spawn(function()
     end
 end)
 
--- Авто-забор предметов
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 local autoClaimItems = false
 
@@ -315,32 +414,28 @@ task.spawn(function()
     end
 end)
 
-local EnchantStatus = MainTab:Paragraph("Статус зачарования шляпы появится здесь...")
--- EnchantStatus обновляется общим ограниченным циклом ниже.
+local EnchantStatus = MainTab:Paragraph("Hat enchant status will appear here...")
 
 MainTab:Button("⚡ Enchant Hat Now", function()
     enchantHat()
 end)
 
--- ==========================================
--- ACHIEVEMENTS TAB
--- ==========================================
 AchievementsTab:Label("Achievements", "rbxassetid://7733673987")
 
 local boxAchievements = {
-    "OpenBoxes_25", "OpenBoxes_50", "OpenBoxes_100", "OpenBoxes_250", "OpenBoxes_500", 
-    "OpenBoxes_1000", "OpenBoxes_1500", "OpenBoxes_2500", "OpenBoxes_5000", "OpenBoxes_10000", 
-    "OpenBoxes_20000", "OpenBoxes_30000", "OpenBoxes_50000", "OpenBoxes_75000", "OpenBoxes_100000", 
-    "OpenBoxes_135000", "OpenBoxes_175000", "OpenBoxes_250000", "OpenBoxes_500000", "OpenBoxes_1000000", 
-    "OpenBoxes_2500000", "OpenBoxes_5000000", "OpenBoxes_10000000", "OpenBoxes_25000000", 
+    "OpenBoxes_25", "OpenBoxes_50", "OpenBoxes_100", "OpenBoxes_250", "OpenBoxes_500",
+    "OpenBoxes_1000", "OpenBoxes_1500", "OpenBoxes_2500", "OpenBoxes_5000", "OpenBoxes_10000",
+    "OpenBoxes_20000", "OpenBoxes_30000", "OpenBoxes_50000", "OpenBoxes_75000", "OpenBoxes_100000",
+    "OpenBoxes_135000", "OpenBoxes_175000", "OpenBoxes_250000", "OpenBoxes_500000", "OpenBoxes_1000000",
+    "OpenBoxes_2500000", "OpenBoxes_5000000", "OpenBoxes_10000000", "OpenBoxes_25000000",
     "OpenBoxes_50000000", "OpenBoxes_100000000"
 }
 
 local hatchAchievements = {
-    "Hatch_25", "Hatch_50", "Hatch_100", "Hatch_250", "Hatch_500", "Hatch_1000", 
-    "Hatch_1500", "Hatch_2500", "Hatch_5000", "Hatch_10000", "Hatch_20000", "Hatch_30000", 
-    "Hatch_50000", "Hatch_75000", "Hatch_100000", "Hatch_135000", "Hatch_175000", "Hatch_250000", 
-    "Hatch_500000", "Hatch_1000000", "Hatch_2500000", "Hatch_5000000", "Hatch_10000000", 
+    "Hatch_25", "Hatch_50", "Hatch_100", "Hatch_250", "Hatch_500", "Hatch_1000",
+    "Hatch_1500", "Hatch_2500", "Hatch_5000", "Hatch_10000", "Hatch_20000", "Hatch_30000",
+    "Hatch_50000", "Hatch_75000", "Hatch_100000", "Hatch_135000", "Hatch_175000", "Hatch_250000",
+    "Hatch_500000", "Hatch_1000000", "Hatch_2500000", "Hatch_5000000", "Hatch_10000000",
     "Hatch_25000000", "Hatch_50000000"
 }
 
@@ -391,9 +486,6 @@ AchievementsTab:Button("🚀 Claim All Achievements Now", function()
     end
 end)
 
--- ==========================================
--- REWARD TAB
--- ==========================================
 RewardTab:Label("Claiming Rewards", "rbxassetid://7733946818")
 
 local questRewards = {"Damage", "Tutorial_1", "Tutorial_2", "Tutorial_3", "Tutorial_4", "Tutorial_5", "Tutorial_6", "Tutorial_7", "Tutorial_8", "Tutorial_9", "Tutorial_10", "Tutorial_11", "Tutorial_12"}
@@ -469,12 +561,8 @@ RewardTab:Button("⚡ Claim All Rewards Now", function()
     claimLogin()
 end)
 
-local RewardStatus = RewardTab:Paragraph("Статус наград появится здесь...")
--- RewardStatus обновляется общим ограниченным циклом ниже.
+local RewardStatus = RewardTab:Paragraph("Reward status will appear here...")
 
--- ==========================================
--- LOCAL PLAYER TAB
--- ==========================================
 LocalPlayerTab:Label("LOCAL PLAYER SETTINGS", "rbxassetid://7743875962")
 
 LocalPlayerTab:Toggle("Anti-AFK", false, function(state)
@@ -530,38 +618,34 @@ LocalPlayerTab:Slider("Gravity Delay", 1, 5, 1, function(value)
     workspace.Gravity = 196.2 * value
 end)
 
-
--- ==========================================
--- ОГРАНИЧЕННОЕ ОБНОВЛЕНИЕ UI
--- ==========================================
 local function buildStatsText()
     local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
     if not leaderstats then
-        return "❌ Leaderstats не найдены!\nОжидайте загрузки игры..."
+        return "❌ Leaderstats not found!\nWaiting for the game to load..."
     end
 
     local stats = "📊 REAL-TIME STATS:\n\n"
     local dmg = leaderstats:FindFirstChild("💥Dmg/s")
-    if dmg then stats = stats .. "• 💥 Урон/Сек: " .. tostring(dmg.Value) .. "\n" end
+    if dmg then stats = stats .. "• 💥 Damage/sec: " .. tostring(dmg.Value) .. "\n" end
 
     local coins = leaderstats:FindFirstChild("🔷World 1 Coins")
-    if coins then stats = stats .. "• 🔷 Монеты: " .. tostring(coins.Value) .. "\n" end
+    if coins then stats = stats .. "• 🔷 Coins: " .. tostring(coins.Value) .. "\n" end
 
     local lvlBonus = leaderstats:FindFirstChild("🎖️Lvl Bonus")
-    if lvlBonus then stats = stats .. "• 🎖️ Бонус уровня: " .. tostring(lvlBonus.Value) .. "\n" end
+    if lvlBonus then stats = stats .. "• 🎖️ Level bonus: " .. tostring(lvlBonus.Value) .. "\n" end
 
     local boxes = leaderstats:FindFirstChild("📦Boxes")
-    if boxes then stats = stats .. "• 📦 Открыто боксов: " .. tostring(boxes.Value) .. "\n" end
+    if boxes then stats = stats .. "• 📦 Boxes opened: " .. tostring(boxes.Value) .. "\n" end
 
-    return stats .. "\n⏰ Последнее обновление: " .. os.date("%H:%M:%S")
+    return stats .. "\n⏰ Last update: " .. os.date("%H:%M:%S")
 end
 
 local function buildEnchantStatus()
     local status = "✨ AUTO ENCHANT HAT STATUS:\n\n"
     status = status .. "🔮 Auto Enchant: " .. (autoEnchantHat and "✅ ENABLED" or "❌ DISABLED") .. "\n"
-    status = status .. "⏰ Enchant Delay: " .. tostring(enchantDelay) .. " сек.\n"
-    status = status .. "🎩 Зачарование: Hat\n\n"
-    status = status .. "⚠️ Примечание: Это автоматически зачаровывает вашу шляпу"
+    status = status .. "⏰ Enchant Delay: " .. tostring(enchantDelay) .. " sec.\n"
+    status = status .. "🎩 Enchant target: Hat\n\n"
+    status = status .. "⚠️ Note: This automatically enchants your hat"
     return status
 end
 
@@ -577,7 +661,7 @@ end
 task.spawn(function()
     while task.wait(1) do
         pcall(function()
-            TimeParagraph:SetText("Текущее время: " .. os.date("%H:%M:%S"))
+            TimeParagraph:SetText("Current time: " .. os.date("%H:%M:%S"))
             StatsParagraph:SetText(buildStatsText())
             EnchantStatus:SetText(buildEnchantStatus())
             RewardStatus:SetText(buildRewardStatus())
