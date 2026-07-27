@@ -10,7 +10,6 @@ local RunService = game:GetService("RunService")
 local oldNamecall
 oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     if self == LocalPlayer and getnamecallmethod() == "Kick" then
-        warn("[Bypass] Заблокирован кик")
         return nil
     end
     return oldNamecall(self, ...)
@@ -37,18 +36,22 @@ local RewardTab = Window:Tab({"Reward", "rbxassetid://7733946818"})
 local LocalPlayerTab = Window:Tab({"LocalPlayer", "rbxassetid://7743875962"})
 
 -- ==========================================
--- БЕЗОПАСНАЯ ЗАГРУЗКА REMOTE EVENTS (Fix для Infinite Yield)
+-- БЕЗОПАСНАЯ ФОНОВАЯ ЗАГРУЗКА REMOTE EVENTS
 -- ==========================================
-local RE = ReplicatedStorage:WaitForChild("RE", 15)
-local RF = ReplicatedStorage:WaitForChild("RF", 15)
+local RE = ReplicatedStorage:FindFirstChild("RE")
+local RF = ReplicatedStorage:FindFirstChild("RF")
+local BoxController = nil
+local AttackBoxRemote = nil
 
-if not RE or not RF then
-    warn("[Error] Папки RE или RF не найдены в ReplicatedStorage! Скрипт может работать некорректно.")
-    return
-end
-
-local BoxController = require(ReplicatedStorage:WaitForChild("Controllers", 15):WaitForChild("BoxController", 15))
-local AttackBoxRemote = RE:WaitForChild("AttackBox", 15)
+task.spawn(function()
+    if not RE then RE = ReplicatedStorage:WaitForChild("RE") end
+    if not RF then RF = ReplicatedStorage:WaitForChild("RF") end
+    
+    local Controllers = ReplicatedStorage:WaitForChild("Controllers")
+    BoxController = require(Controllers:WaitForChild("BoxController"))
+    AttackBoxRemote = RE:WaitForChild("AttackBox")
+    print("[Success] Сетевые компоненты (RE, RF, BoxController) успешно загружены!")
+end)
 
 -- ==========================================
 -- MAIN TAB
@@ -92,6 +95,7 @@ local attackSpeed = 0.1
 local attackedBoxes = {}
 
 local function attackBox(fieldId, boxId)
+    if not AttackBoxRemote then return end
     if not fieldId or not boxId then return end
     local timeAtk = os.clock()
     pcall(function()
@@ -101,12 +105,11 @@ local function attackBox(fieldId, boxId)
 end
 
 local function attackNearbyBoxes()
-    if not autoAttackBoxes then return end
+    if not autoAttackBoxes or not BoxController then return end
     if not LocalPlayer.Character or not LocalPlayer.Character.PrimaryPart then return end
     
     local pos = LocalPlayer.Character.PrimaryPart.Position
     
-    -- Очистка старых записей
     for id, timeAtk in pairs(attackedBoxes) do
         if os.clock() - timeAtk > 3 then
             attackedBoxes[id] = nil
@@ -131,7 +134,6 @@ end
 
 MainTab:Toggle("Auto Damage All Boxes", false, function(state)
     autoAttackBoxes = state
-    _G.AutoAttackBoxes = state
     if state then
         task.spawn(function()
             while autoAttackBoxes do
@@ -166,7 +168,13 @@ MainTab:Toggle("Auto Buy All Weapons", false, function(state)
 end)
 
 local function buyAllWeapons()
-    local areas = workspace:WaitForChild("Areas")
+    if not RF then return end
+    local purchaseRemote = RF:FindFirstChild("PurchaseItem")
+    if not purchaseRemote then return end
+    
+    local areas = workspace:FindFirstChild("Areas")
+    if not areas then return end
+    
     for _, area in pairs(areas:GetChildren()) do
         local weaponsFolder = area:FindFirstChild("Weapons")
         if weaponsFolder then
@@ -174,7 +182,7 @@ local function buyAllWeapons()
             if items then
                 for _, item in pairs(items:GetChildren()) do
                     pcall(function()
-                        RF.PurchaseItem:InvokeServer(item)
+                        purchaseRemote:InvokeServer(item)
                     end)
                     task.wait(0.5)
                 end
@@ -226,8 +234,11 @@ local autoEnchantHat = false
 local enchantDelay = 5
 
 local function enchantHat()
+    if not RE then return end
+    local enchantRemote = RE:FindFirstChild("EnchantStationUpgrade")
+    if not enchantRemote then return end
     pcall(function()
-        RE.EnchantStationUpgrade:FireServer("Hat")
+        enchantRemote:FireServer("Hat")
     end)
 end
 
@@ -298,8 +309,11 @@ AchievementsTab:Toggle("Auto Claim Achievement: Hatch", false, function(state)
 end)
 
 local function claimAchievement(achName)
+    if not RE then return end
+    local remote = RE:FindFirstChild("ClaimAchievement")
+    if not remote then return end
     pcall(function()
-        RE.ClaimAchievement:FireServer(achName)
+        remote:FireServer(achName)
     end)
 end
 
@@ -354,15 +368,24 @@ RewardTab:Toggle("Auto Claim Login Rewards", false, function(state)
 end)
 
 local function claimQuest(questName)
-    pcall(function() RE.CollectQuest:FireServer(questName) end)
+    if not RE then return end
+    local remote = RE:FindFirstChild("CollectQuest")
+    if not remote then return end
+    pcall(function() remote:FireServer(questName) end)
 end
 
 local function claimPlaytime(id)
-    pcall(function() RE.ClaimPlaytimeReward:FireServer(id) end)
+    if not RE then return end
+    local remote = RE:FindFirstChild("ClaimPlaytimeReward")
+    if not remote then return end
+    pcall(function() remote:FireServer(id) end)
 end
 
 local function claimLogin()
-    pcall(function() RE.ClaimLoginReward:FireServer() end)
+    if not RE then return end
+    local remote = RE:FindFirstChild("ClaimLoginReward")
+    if not remote then return end
+    pcall(function() remote:FireServer() end)
 end
 
 task.spawn(function()
