@@ -36,12 +36,15 @@ local RewardTab = Window:Tab({"Reward", "rbxassetid://7733946818"})
 local LocalPlayerTab = Window:Tab({"LocalPlayer", "rbxassetid://7743875962"})
 
 -- ==========================================
--- БЕЗОПАСНАЯ ФОНОВАЯ ЗАГРУЗКА REMOTE EVENTS
+-- ФОНОВАЯ ЗАГРУЗКА И ИНИЦИАЛИЗАЦИЯ ZAP
 -- ==========================================
 local RE = ReplicatedStorage:FindFirstChild("RE")
 local RF = ReplicatedStorage:FindFirstChild("RF")
 local BoxController = nil
-local AttackBoxRemote = nil
+local BoxesZAP = nil
+
+-- Статичный хвост буфера атаки (7 байт)
+local staticTailBuf = buffer.fromstring("\xA4\x1D\xC1\xCD\x99\xDAA")
 
 task.spawn(function()
     if not RE then RE = ReplicatedStorage:WaitForChild("RE") end
@@ -49,8 +52,11 @@ task.spawn(function()
     
     local Controllers = ReplicatedStorage:WaitForChild("Controllers")
     BoxController = require(Controllers:WaitForChild("BoxController"))
-    AttackBoxRemote = RE:WaitForChild("AttackBox")
-    print("[Success] Сетевые компоненты (RE, RF, BoxController) успешно загружены!")
+    
+    local ZAPFolder = ReplicatedStorage:WaitForChild("ZAP")
+    BoxesZAP = ZAPFolder:WaitForChild("Boxes_RELIABLE")
+    
+    print("[Success] Сетевые компоненты и ZAP (Boxes_RELIABLE) загружены!")
 end)
 
 -- ==========================================
@@ -88,20 +94,44 @@ end)
 
 MainTab:Label("Boxes", "rbxassetid://7733752575")
 
--- Логика атаки боксов
+-- Логика авто-атаки боксов через ZAP буфер
 local autoAttackBoxes = false
 local attackRange = 50
 local attackSpeed = 0.1
 local attackedBoxes = {}
 
 local function attackBox(fieldId, boxId)
-    if not AttackBoxRemote then return end
+    if not BoxesZAP then return end
     if not fieldId or not boxId then return end
-    local timeAtk = os.clock()
+    
+    -- Создаем буфер на 17 байт
+    local buf = buffer.create(17)
+    
+    -- Заголовок: \x00\x04
+    buffer.writeu8(buf, 0, 0x00)
+    buffer.writeu8(buf, 1, 0x04)
+    
+    -- Записываем Field ID (Big Endian Int32)
+    buffer.writeu8(buf, 2, math.floor(fieldId / 16777216) % 256)
+    buffer.writeu8(buf, 3, math.floor(fieldId / 65536) % 256)
+    buffer.writeu8(buf, 4, math.floor(fieldId / 256) % 256)
+    buffer.writeu8(buf, 5, fieldId % 256)
+    
+    -- Записываем Box ID (Big Endian Int32)
+    buffer.writeu8(buf, 6, math.floor(boxId / 16777216) % 256)
+    buffer.writeu8(buf, 7, math.floor(boxId / 65536) % 256)
+    buffer.writeu8(buf, 8, math.floor(boxId / 256) % 256)
+    buffer.writeu8(buf, 9, boxId % 256)
+    
+    -- Копируем статичный хвост (7 байт)
+    buffer.copy(buf, 10, staticTailBuf, 0, 7)
+    
+    -- Отправляем на сервер
     pcall(function()
-        AttackBoxRemote:FireServer(fieldId, boxId, timeAtk)
+        BoxesZAP:FireServer(buf, {})
     end)
-    attackedBoxes[boxId] = timeAtk
+    
+    attackedBoxes[boxId] = os.clock()
 end
 
 local function attackNearbyBoxes()
@@ -110,6 +140,7 @@ local function attackNearbyBoxes()
     
     local pos = LocalPlayer.Character.PrimaryPart.Position
     
+    -- Очистка старых записей
     for id, timeAtk in pairs(attackedBoxes) do
         if os.clock() - timeAtk > 3 then
             attackedBoxes[id] = nil
@@ -123,7 +154,7 @@ local function attackNearbyBoxes()
     if not success or not boxes then return end
     
     for _, box in ipairs(boxes) do
-        if box and box.Health > box.Damage and not attackedBoxes[box.Id] then
+        if box and box.Id and box.Field and box.Field.Id and box.Health > box.Damage and not attackedBoxes[box.Id] then
             if (pos - box.CFrame.Position).Magnitude <= 30 then
                 attackBox(box.Field.Id, box.Id)
                 task.wait(0.05)
