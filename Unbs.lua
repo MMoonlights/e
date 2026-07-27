@@ -36,27 +36,36 @@ local RewardTab = Window:Tab({"Reward", "rbxassetid://7733946818"})
 local LocalPlayerTab = Window:Tab({"LocalPlayer", "rbxassetid://7743875962"})
 
 -- ==========================================
--- ФОНОВАЯ ЗАГРУЗКА И ИНИЦИАЛИЗАЦИЯ ZAP
+-- БЕЗОПАСНАЯ ФОНОВАЯ ЗАГРУЗКА (БЕЗ WaitForChild)
 -- ==========================================
-local RE = ReplicatedStorage:FindFirstChild("RE")
-local RF = ReplicatedStorage:FindFirstChild("RF")
+local RE = nil
+local RF = nil
 local BoxController = nil
 local BoxesZAP = nil
 
--- Статичный хвост буфера атаки (7 байт)
-local staticTailBuf = buffer.fromstring("\xA4\x1D\xC1\xCD\x99\xDAA")
-
 task.spawn(function()
-    if not RE then RE = ReplicatedStorage:WaitForChild("RE") end
-    if not RF then RF = ReplicatedStorage:WaitForChild("RF") end
+    -- Безопасный поиск ZAP
+    while not ReplicatedStorage:FindFirstChild("ZAP") do task.wait(0.5) end
+    local zapFolder = ReplicatedStorage:FindFirstChild("ZAP")
     
-    local Controllers = ReplicatedStorage:WaitForChild("Controllers")
-    BoxController = require(Controllers:WaitForChild("BoxController"))
+    while not zapFolder:FindFirstChild("Boxes_RELIABLE") do task.wait(0.5) end
+    BoxesZAP = zapFolder:FindFirstChild("Boxes_RELIABLE")
     
-    local ZAPFolder = ReplicatedStorage:WaitForChild("ZAP")
-    BoxesZAP = ZAPFolder:WaitForChild("Boxes_RELIABLE")
+    -- Безопасный поиск Controllers
+    while not ReplicatedStorage:FindFirstChild("Controllers") do task.wait(0.5) end
+    local controllers = ReplicatedStorage:FindFirstChild("Controllers")
     
-    print("[Success] Сетевые компоненты и ZAP (Boxes_RELIABLE) загружены!")
+    while not controllers:FindFirstChild("BoxController") do task.wait(0.5) end
+    BoxController = require(controllers:FindFirstChild("BoxController"))
+    
+    -- Фоновый поиск RE и RF (не блокируют скрипт)
+    while not ReplicatedStorage:FindFirstChild("RE") do task.wait(0.5) end
+    RE = ReplicatedStorage:FindFirstChild("RE")
+    
+    while not ReplicatedStorage:FindFirstChild("RF") do task.wait(0.5) end
+    RF = ReplicatedStorage:FindFirstChild("RF")
+    
+    print("[Success] ZAP, BoxController, RE и RF успешно загружены в фоновом режиме!")
 end)
 
 -- ==========================================
@@ -104,6 +113,10 @@ local function attackBox(fieldId, boxId)
     if not BoxesZAP then return end
     if not fieldId or not boxId then return end
     
+    fieldId = tonumber(fieldId)
+    boxId = tonumber(boxId)
+    if not fieldId or not boxId then return end
+    
     -- Создаем буфер на 17 байт
     local buf = buffer.create(17)
     
@@ -124,14 +137,20 @@ local function attackBox(fieldId, boxId)
     buffer.writeu8(buf, 9, boxId % 256)
     
     -- Копируем статичный хвост (7 байт)
-    buffer.copy(buf, 10, staticTailBuf, 0, 7)
+    buffer.writeu8(buf, 10, 0xA4)
+    buffer.writeu8(buf, 11, 0x1D)
+    buffer.writeu8(buf, 12, 0xC1)
+    buffer.writeu8(buf, 13, 0xCD)
+    buffer.writeu8(buf, 14, 0x99)
+    buffer.writeu8(buf, 15, 0xDA)
+    buffer.writeu8(buf, 16, 0x41)
     
     -- Отправляем на сервер
     pcall(function()
         BoxesZAP:FireServer(buf, {})
     end)
     
-    attackedBoxes[boxId] = os.clock()
+    attackedBoxes[tostring(boxId)] = os.clock()
 end
 
 local function attackNearbyBoxes()
@@ -140,7 +159,6 @@ local function attackNearbyBoxes()
     
     local pos = LocalPlayer.Character.PrimaryPart.Position
     
-    -- Очистка старых записей
     for id, timeAtk in pairs(attackedBoxes) do
         if os.clock() - timeAtk > 3 then
             attackedBoxes[id] = nil
@@ -154,8 +172,8 @@ local function attackNearbyBoxes()
     if not success or not boxes then return end
     
     for _, box in ipairs(boxes) do
-        if box and box.Id and box.Field and box.Field.Id and box.Health > box.Damage and not attackedBoxes[box.Id] then
-            if (pos - box.CFrame.Position).Magnitude <= 30 then
+        if box and box.Id and box.Field and box.Field.Id and not attackedBoxes[tostring(box.Id)] then
+            if (pos - box.CFrame.Position).Magnitude <= attackRange then
                 attackBox(box.Field.Id, box.Id)
                 task.wait(0.05)
             end
@@ -265,11 +283,10 @@ local autoEnchantHat = false
 local enchantDelay = 5
 
 local function enchantHat()
-    if not RE then return end
-    local enchantRemote = RE:FindFirstChild("EnchantStationUpgrade")
-    if not enchantRemote then return end
     pcall(function()
-        enchantRemote:FireServer("Hat")
+        if RE and RE:FindFirstChild("EnchantStationUpgrade") then
+            RE.EnchantStationUpgrade:FireServer("Hat")
+        end
     end)
 end
 
@@ -340,11 +357,10 @@ AchievementsTab:Toggle("Auto Claim Achievement: Hatch", false, function(state)
 end)
 
 local function claimAchievement(achName)
-    if not RE then return end
-    local remote = RE:FindFirstChild("ClaimAchievement")
-    if not remote then return end
     pcall(function()
-        remote:FireServer(achName)
+        if RE and RE:FindFirstChild("ClaimAchievement") then
+            RE.ClaimAchievement:FireServer(achName)
+        end
     end)
 end
 
@@ -399,24 +415,27 @@ RewardTab:Toggle("Auto Claim Login Rewards", false, function(state)
 end)
 
 local function claimQuest(questName)
-    if not RE then return end
-    local remote = RE:FindFirstChild("CollectQuest")
-    if not remote then return end
-    pcall(function() remote:FireServer(questName) end)
+    pcall(function()
+        if RE and RE:FindFirstChild("CollectQuest") then
+            RE.CollectQuest:FireServer(questName)
+        end
+    end)
 end
 
 local function claimPlaytime(id)
-    if not RE then return end
-    local remote = RE:FindFirstChild("ClaimPlaytimeReward")
-    if not remote then return end
-    pcall(function() remote:FireServer(id) end)
+    pcall(function()
+        if RE and RE:FindFirstChild("ClaimPlaytimeReward") then
+            RE.ClaimPlaytimeReward:FireServer(id)
+        end
+    end)
 end
 
 local function claimLogin()
-    if not RE then return end
-    local remote = RE:FindFirstChild("ClaimLoginReward")
-    if not remote then return end
-    pcall(function() remote:FireServer() end)
+    pcall(function()
+        if RE and RE:FindFirstChild("ClaimLoginReward") then
+            RE.ClaimLoginReward:FireServer()
+        end
+    end)
 end
 
 task.spawn(function()
@@ -517,138 +536,6 @@ end)
 
 LocalPlayerTab:Slider("Gravity Delay", 1, 5, 1, function(value)
     workspace.Gravity = 196.2 * value
-end)
-
--- ==========================================
--- AUTO SELL HAT GUI (Separate Window)
--- ==========================================
-local SellGui = Instance.new("ScreenGui")
-SellGui.Name = "HatSellUI"
-SellGui.ResetOnSpawn = false
-SellGui.Parent = PlayerGui
-
-local SellFrame = Instance.new("Frame")
-SellFrame.Size = UDim2.new(0, 220, 0, 160)
-SellFrame.Position = UDim2.new(0.5, -110, 0.5, -75)
-SellFrame.BackgroundColor3 = Color3.fromRGB(20, 15, 25)
-SellFrame.Active = true
-SellFrame.Draggable = true
-SellFrame.Parent = SellGui
-
-Instance.new("UICorner", SellFrame).CornerRadius = UDim.new(0, 10)
-
-local SellTitle = Instance.new("TextLabel")
-SellTitle.Size = UDim2.new(1, 0, 0, 25)
-SellTitle.BackgroundTransparency = 1
-SellTitle.Text = "🎩 Auto Sell"
-SellTitle.TextColor3 = Color3.fromRGB(220, 180, 255)
-SellTitle.Font = Enum.Font.GothamBold
-SellTitle.TextSize = 15
-SellTitle.Parent = SellFrame
-
-local AutoSellBtn = Instance.new("TextButton")
-AutoSellBtn.Size = UDim2.new(1, -20, 0, 25)
-AutoSellBtn.Position = UDim2.new(0, 10, 0, 35)
-AutoSellBtn.Text = "Auto Sell: ❌ OFF"
-AutoSellBtn.BackgroundColor3 = Color3.fromRGB(90, 20, 40)
-AutoSellBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-AutoSellBtn.Font = Enum.Font.Gotham
-AutoSellBtn.TextSize = 13
-AutoSellBtn.Parent = SellFrame
-
-local isAutoSelling = false
-local sellDelay = 5
-local lastSellTime = "Never"
-
-AutoSellBtn.MouseButton1Click:Connect(function()
-    isAutoSelling = not isAutoSelling
-    if isAutoSelling then
-        AutoSellBtn.Text = "Auto Sell: ✅ ON"
-        AutoSellBtn.BackgroundColor3 = Color3.fromRGB(40, 90, 60)
-    else
-        AutoSellBtn.Text = "Auto Sell: ❌ OFF"
-        AutoSellBtn.BackgroundColor3 = Color3.fromRGB(90, 20, 40)
-    end
-end)
-
-local SellDelayLabel = Instance.new("TextLabel")
-SellDelayLabel.Position = UDim2.new(0, 10, 0, 65)
-SellDelayLabel.Size = UDim2.new(1, -20, 0, 20)
-SellDelayLabel.Text = "Delay: " .. sellDelay .. "s"
-SellDelayLabel.TextColor3 = Color3.fromRGB(230, 200, 255)
-SellDelayLabel.Font = Enum.Font.Gotham
-SellDelayLabel.TextSize = 13
-SellDelayLabel.BackgroundTransparency = 1
-SellDelayLabel.Parent = SellFrame
-
-local DelayInput = Instance.new("TextBox")
-DelayInput.Position = UDim2.new(0, 10, 0, 90)
-DelayInput.Size = UDim2.new(1, -20, 0, 20)
-DelayInput.PlaceholderText = "1-30s"
-DelayInput.Text = tostring(sellDelay)
-DelayInput.TextColor3 = Color3.fromRGB(255, 255, 255)
-DelayInput.BackgroundColor3 = Color3.fromRGB(40, 20, 50)
-DelayInput.ClearTextOnFocus = false
-DelayInput.Font = Enum.Font.Gotham
-DelayInput.TextSize = 12
-DelayInput.Parent = SellFrame
-
-DelayInput.FocusLost:Connect(function()
-    local newDelay = tonumber(DelayInput.Text)
-    if newDelay and newDelay >= 1 and newDelay <= 30 then
-        sellDelay = newDelay
-        SellDelayLabel.Text = "Delay: " .. newDelay .. "s"
-    else
-        DelayInput.Text = tostring(sellDelay)
-    end
-end)
-
-local LastSellLabel = Instance.new("TextLabel")
-LastSellLabel.Position = UDim2.new(0, 10, 0, 115)
-LastSellLabel.Size = UDim2.new(1, -20, 0, 20)
-LastSellLabel.BackgroundTransparency = 1
-LastSellLabel.Text = "Last: " .. lastSellTime
-LastSellLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
-LastSellLabel.Font = Enum.Font.Code
-LastSellLabel.TextSize = 12
-LastSellLabel.TextXAlignment = Enum.TextXAlignment.Left
-LastSellLabel.Parent = SellFrame
-
-local SellNowBtn = Instance.new("TextButton")
-SellNowBtn.Size = UDim2.new(1, -20, 0, 20)
-SellNowBtn.Position = UDim2.new(0, 10, 0, 140)
-SellNowBtn.Text = "💰 Sell Now"
-SellNowBtn.BackgroundColor3 = Color3.fromRGB(80, 30, 90)
-SellNowBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-SellNowBtn.Font = Enum.Font.Gotham
-SellNowBtn.TextSize = 12
-SellNowBtn.Parent = SellFrame
-
-local function sellItems()
-    if not RF then return end
-    local SellRemote = RF:FindFirstChild("SellItems")
-    if not SellRemote then return end
-    
-    for i = 1, 50 do
-        pcall(function()
-            SellRemote:InvokeServer({ tostring(i) }, "Hats")
-        end)
-        task.wait(0.25)
-    end
-    lastSellTime = os.date("%H:%M:%S")
-    LastSellLabel.Text = "Last: " .. lastSellTime
-end
-
-SellNowBtn.MouseButton1Click:Connect(sellItems)
-
-task.spawn(function()
-    local lastTick = tick()
-    while task.wait(1) do
-        if isAutoSelling and tick() - lastTick >= sellDelay then
-            sellItems()
-            lastTick = tick()
-        end
-    end
 end)
 
 print("[Success] Unboxing Simulator Script Fully Loaded!")
