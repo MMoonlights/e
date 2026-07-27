@@ -139,24 +139,29 @@ MainTab:Label("Boxes", "rbxassetid://7733752575")
 
 local autoAttackBoxes = false
 local autoWalkToBoxes = true
-local attackRange = 24
-local stopDistance = 16
+local attackRange = 23
+local stopDistance = 15
 local attacksPerSecond = 6
-local maxTravelDistance = 350
+local maxTravelDistance = 300
 local lastStatusAt = 0
 local lastMoveAt = 0
 local lastPathAt = 0
 local lastVisualCheckAt = 0
 local lockedBox = nil
 local lockedArea = nil
+local lockedFieldId = nil
 local lockedVisual = nil
+local lockedPosition = nil
 local currentPath = nil
 local currentWaypoints = nil
 local currentWaypointIndex = 1
+local areaFieldCache = setmetatable({}, {
+    __mode = "k"
+})
 
 local overlapParams = OverlapParams.new()
 overlapParams.FilterType = Enum.RaycastFilterType.Exclude
-overlapParams.MaxParts = 50
+overlapParams.MaxParts = 100
 
 local function getCharacterState()
     local character = LocalPlayer.Character
@@ -220,25 +225,115 @@ local function getCurrentField(position)
         end
     end
 
-    if selectedField then
-        return selectedField
+    return selectedField
+end
+
+local function getDirectFieldId(areaKey, areaData)
+    local values = {
+        areaData.Id,
+        areaData.FieldId,
+        areaData.fieldId,
+        areaData.FieldID,
+        areaData.fieldID
+    }
+
+    if type(areaData.Field) == "table" then
+        table.insert(values, areaData.Field.Id)
+        table.insert(values, areaData.Field.FieldId)
     end
+
+    if tonumber(areaKey) ~= nil then
+        table.insert(values, 1, areaKey)
+    end
+
+    for _, value in ipairs(values) do
+        local fieldId = tonumber(value)
+
+        if fieldId ~= nil and fieldsById[fieldId] then
+            return fieldId
+        end
+    end
+
+    return nil
+end
+
+local function resolveAreaFieldId(areaKey, areaData)
+    local cached = areaFieldCache[areaData]
+
+    if cached and fieldsById[cached] then
+        return cached
+    end
+
+    local directId = getDirectFieldId(areaKey, areaData)
+
+    if directId ~= nil then
+        areaFieldCache[areaData] = directId
+        return directId
+    end
+
+    local bestFieldId = nil
+    local bestScore = -1
+    local bestDistance = math.huge
+    local areaType = areaData.FieldTypeId
 
     for _, field in pairs(fieldList) do
         if type(field) == "table"
             and tonumber(field.Id) ~= nil
             and typeof(field.Position) == "Vector3"
+            and (
+                areaType == nil
+                or field.FieldTypeId == areaType
+            )
         then
-            local distance = (position - field.Position).Magnitude
+            local score = 0
+            local distanceTotal = 0
+            local sampled = 0
 
-            if distance < selectedDistance then
-                selectedDistance = distance
-                selectedField = field
+            for _, box in next, areaData.Boxes do
+                if isBoxValid(box) then
+                    sampled += 1
+
+                    if fieldContainsPosition(
+                        field,
+                        box.CFrame.Position,
+                        15
+                    ) then
+                        score += 1
+                    end
+
+                    distanceTotal += (
+                        box.CFrame.Position - field.Position
+                    ).Magnitude
+
+                    if sampled >= 30 then
+                        break
+                    end
+                end
+            end
+
+            local averageDistance = sampled > 0
+                and distanceTotal / sampled
+                or math.huge
+
+            if score > bestScore
+                or (
+                    score == bestScore
+                    and averageDistance < bestDistance
+                )
+            then
+                bestScore = score
+                bestDistance = averageDistance
+                bestFieldId = tonumber(field.Id)
             end
         end
     end
 
-    return selectedField
+    if bestFieldId ~= nil and bestScore > 0 then
+        areaFieldCache[areaData] = bestFieldId
+        return bestFieldId
+    end
+
+    return nil
 end
 
 local function getDirectVisual(box)
@@ -264,126 +359,132 @@ local function getDirectVisual(box)
     return nil
 end
 
-local function attributeMatches(instance, boxId)
-    local current = instance
+local function getInstancePosition(instance)
+    if typeof(instance) ~= "Instance" then
+        return nil
+    end
 
-    for _ = 1, 6 do
+    if instance:IsA("BasePart") then
+        return instance.Position
+    end
+
+    if instance:IsA("Model") then
+        return instance:GetPivot().Position
+    end
+
+    local model = instance:FindFirstAncestorOfClass("Model")
+
+    if model then
+        return model:GetPivot().Position
+    end
+
+    return nil
+end
+
+local function getMatchingAncestor(part, boxId)
+    local current = part
+
+    for _ = 1, 8 do
         if not current or current == workspace then
             break
         end
 
-        local values = {
+        local attributes = {
             current:GetAttribute("BoxId"),
             current:GetAttribute("boxId"),
             current:GetAttribute("Id"),
             current:GetAttribute("ID")
         }
 
-        for _, value in ipairs(values) do
+        for _, value in ipairs(attributes) do
             if tonumber(value) == boxId then
-                return true
+                return current
+            end
+        end
+
+        if current:IsA("Model") then
+            local lowerName = string.lower(current.Name)
+            local namedLikeBox =
+                string.find(lowerName, "box", 1, true)
+                or string.find(lowerName, "crate", 1, true)
+                or string.find(lowerName, "gift", 1, true)
+                or string.find(lowerName, "present", 1, true)
+
+            local hasStructure =
+                current:FindFirstChild("Top", true)
+                or current:FindFirstChild("Top2", true)
+                or current:FindFirstChild("Lid", true)
+                or current:FindFirstChild("Hinge", true)
+
+            if namedLikeBox and hasStructure then
+                return current
             end
         end
 
         current = current.Parent
     end
 
-    return false
+    return nil
 end
 
 local function findVisualBox(box, character)
     local directVisual = getDirectVisual(box)
 
     if directVisual then
-        return directVisual
+        local position = getInstancePosition(directVisual)
+
+        if position
+            and (
+                position - box.CFrame.Position
+            ).Magnitude <= 10
+        then
+            return directVisual, position
+        end
     end
 
-    overlapParams.FilterDescendantsInstances = character and {character} or {}
+    overlapParams.FilterDescendantsInstances = character
+        and {character}
+        or {}
 
     local parts = workspace:GetPartBoundsInRadius(
         box.CFrame.Position,
-        6,
+        8,
         overlapParams
     )
 
-    local fallback = nil
-    local fallbackDistance = math.huge
     local boxId = tonumber(box.Id)
+    local bestVisual = nil
+    local bestPosition = nil
+    local bestDistance = math.huge
 
     for _, part in ipairs(parts) do
         if part:IsA("BasePart")
             and part:IsDescendantOf(workspace)
             and part.Transparency < 0.98
         then
-            local size = part.Size
-            local largestSize = math.max(size.X, size.Y, size.Z)
-            local distance = (
-                part.Position - box.CFrame.Position
-            ).Magnitude
+            local visual = getMatchingAncestor(part, boxId)
 
-            if boxId and attributeMatches(part, boxId) then
-                return part
-            end
+            if visual then
+                local position = getInstancePosition(visual)
 
-            local name = string.lower(part.Name)
-            local parentName = part.Parent
-                and string.lower(part.Parent.Name)
-                or ""
+                if position then
+                    local distance = (
+                        position - box.CFrame.Position
+                    ).Magnitude
 
-            local namedLikeBox = string.find(name, "box", 1, true)
-                or string.find(name, "crate", 1, true)
-                or string.find(name, "gift", 1, true)
-                or string.find(name, "present", 1, true)
-                or string.find(parentName, "box", 1, true)
-                or string.find(parentName, "crate", 1, true)
-                or string.find(parentName, "gift", 1, true)
-                or string.find(parentName, "present", 1, true)
-
-            if namedLikeBox and distance < 8 then
-                return part
-            end
-
-            if largestSize <= 35
-                and size.Y >= 1
-                and distance < fallbackDistance
-            then
-                fallback = part
-                fallbackDistance = distance
+                    if distance <= 10
+                        and distance < bestDistance
+                    then
+                        bestDistance = distance
+                        bestVisual = visual
+                        bestPosition = position
+                    end
+                end
             end
         end
     end
 
-    if fallbackDistance <= 3.5 then
-        return fallback
-    end
-
-    return nil
-end
-
-local function resolveFieldId(areaData, box, currentField)
-    local candidates = {
-        currentField and currentField.Id,
-        areaData and areaData.Id,
-        areaData and areaData.FieldId,
-        areaData and areaData.fieldId,
-        box and box.FieldId,
-        box and box.fieldId
-    }
-
-    if box and type(box.Field) == "table" then
-        table.insert(candidates, box.Field.Id)
-        table.insert(candidates, box.Field.FieldId)
-    end
-
-    for _, candidate in ipairs(candidates) do
-        local fieldId = tonumber(candidate)
-
-        if fieldId ~= nil then
-            return fieldId
-        end
-    end
-
-    return nil
+    return bestVisual, bestPosition
 end
 
 local function getCandidateBoxes()
@@ -399,36 +500,40 @@ local function getCandidateBoxes()
         return {}, nil
     end
 
+    local currentFieldId = tonumber(currentField.Id)
     local candidates = {}
-    local currentType = currentField.FieldTypeId
 
-    for _, areaData in next, boxAreaState do
+    for areaKey, areaData in next, boxAreaState do
         if type(areaData) == "table"
             and type(areaData.Boxes) == "table"
             and areaData.Loaded ~= false
-            and (
-                currentType == nil
-                or areaData.FieldTypeId == currentType
-            )
         then
-            for _, box in next, areaData.Boxes do
-                if isBoxValid(box)
-                    and fieldContainsPosition(
-                        currentField,
-                        box.CFrame.Position,
-                        12
-                    )
-                then
-                    local distance = (
-                        rootPart.Position - box.CFrame.Position
-                    ).Magnitude
+            local areaFieldId = resolveAreaFieldId(
+                areaKey,
+                areaData
+            )
 
-                    if distance <= maxTravelDistance then
-                        table.insert(candidates, {
-                            Box = box,
-                            Area = areaData,
-                            Distance = distance
-                        })
+            if areaFieldId == currentFieldId then
+                for _, box in next, areaData.Boxes do
+                    if isBoxValid(box)
+                        and fieldContainsPosition(
+                            currentField,
+                            box.CFrame.Position,
+                            10
+                        )
+                    then
+                        local distance = (
+                            rootPart.Position - box.CFrame.Position
+                        ).Magnitude
+
+                        if distance <= maxTravelDistance then
+                            table.insert(candidates, {
+                                Box = box,
+                                Area = areaData,
+                                FieldId = areaFieldId,
+                                Distance = distance
+                            })
+                        end
                     end
                 end
             end
@@ -439,18 +544,33 @@ local function getCandidateBoxes()
         return left.Distance < right.Distance
     end)
 
-    for index = #candidates, 21, -1 do
+    for index = #candidates, 31, -1 do
         candidates[index] = nil
     end
 
+    local visibleCandidates = {}
+
     for _, candidate in ipairs(candidates) do
-        candidate.Visual = findVisualBox(
+        local visual, visualPosition = findVisualBox(
             candidate.Box,
             character
         )
+
+        if visual and visualPosition then
+            candidate.Visual = visual
+            candidate.Position = visualPosition
+            candidate.Distance = (
+                rootPart.Position - visualPosition
+            ).Magnitude
+            table.insert(visibleCandidates, candidate)
+        end
     end
 
-    return candidates, currentField
+    table.sort(visibleCandidates, function(left, right)
+        return left.Distance < right.Distance
+    end)
+
+    return visibleCandidates, currentField
 end
 
 local function clearMovement()
@@ -462,7 +582,9 @@ end
 local function clearTarget()
     lockedBox = nil
     lockedArea = nil
+    lockedFieldId = nil
     lockedVisual = nil
+    lockedPosition = nil
     clearMovement()
 end
 
@@ -471,76 +593,82 @@ local function getLockedBox()
 
     if not rootPart then
         clearTarget()
-        return nil, nil, nil, math.huge, 0, nil
+        return nil, nil, nil, nil, math.huge, 0
     end
 
-    local currentField = getCurrentField(rootPart.Position)
-
     if isBoxValid(lockedBox)
-        and currentField
+        and lockedFieldId ~= nil
+        and fieldsById[lockedFieldId]
         and fieldContainsPosition(
-            currentField,
-            lockedBox.CFrame.Position,
-            12
+            fieldsById[lockedFieldId],
+            rootPart.Position,
+            8
         )
     then
-        local distance = (
-            rootPart.Position - lockedBox.CFrame.Position
-        ).Magnitude
-
-        if os.clock() - lastVisualCheckAt >= 0.75 then
+        if os.clock() - lastVisualCheckAt >= 0.5 then
             lastVisualCheckAt = os.clock()
-            lockedVisual = findVisualBox(
+
+            local visual, position = findVisualBox(
                 lockedBox,
                 character
             )
+
+            lockedVisual = visual
+            lockedPosition = position
         end
 
         if lockedVisual
             and lockedVisual:IsDescendantOf(workspace)
+            and lockedPosition
         then
+            local distance = (
+                rootPart.Position - lockedPosition
+            ).Magnitude
+
             local candidates = getCandidateBoxes()
+
             return lockedBox,
                 lockedArea,
-                lockedVisual,
+                lockedFieldId,
+                lockedPosition,
                 distance,
-                #candidates,
-                currentField
+                #candidates
         end
     end
 
     clearTarget()
 
-    local candidates, selectedField = getCandidateBoxes()
+    local candidates = getCandidateBoxes()
+    local candidate = candidates[1]
 
-    for _, candidate in ipairs(candidates) do
-        if candidate.Visual then
-            lockedBox = candidate.Box
-            lockedArea = candidate.Area
-            lockedVisual = candidate.Visual
-            lastVisualCheckAt = os.clock()
+    if candidate then
+        lockedBox = candidate.Box
+        lockedArea = candidate.Area
+        lockedFieldId = candidate.FieldId
+        lockedVisual = candidate.Visual
+        lockedPosition = candidate.Position
+        lastVisualCheckAt = os.clock()
 
-            return lockedBox,
-                lockedArea,
-                lockedVisual,
-                candidate.Distance,
-                #candidates,
-                selectedField
-        end
+        return lockedBox,
+            lockedArea,
+            lockedFieldId,
+            lockedPosition,
+            candidate.Distance,
+            #candidates
     end
 
-    return nil, nil, nil, math.huge, #candidates, selectedField
+    return nil, nil, nil, nil, math.huge, 0
 end
 
-local function getApproachPosition(rootPosition, boxPosition)
-    local offset = rootPosition - boxPosition
+local function getApproachPosition(rootPosition, targetPosition)
+    local offset = rootPosition - targetPosition
     local horizontal = Vector3.new(offset.X, 0, offset.Z)
 
     if horizontal.Magnitude < 0.1 then
         horizontal = Vector3.new(1, 0, 0)
     end
 
-    return boxPosition
+    return targetPosition
         + horizontal.Unit * stopDistance
         + Vector3.new(0, 2, 0)
 end
@@ -582,8 +710,8 @@ local function computePath(destination)
     return true
 end
 
-local function moveToTarget(box, distance)
-    if not autoWalkToBoxes or not box then
+local function moveToTarget(targetPosition, distance)
+    if not autoWalkToBoxes or not targetPosition then
         return
     end
 
@@ -601,7 +729,7 @@ local function moveToTarget(box, distance)
 
     local destination = getApproachPosition(
         rootPart.Position,
-        box.CFrame.Position
+        targetPosition
     )
 
     if not currentWaypoints
@@ -639,20 +767,24 @@ local function moveToTarget(box, distance)
     end
 end
 
-local function attackBox(box, areaData, currentField, distance)
-    if distance > attackRange then
+local function attackBox(box, fieldId, targetPosition)
+    local _, _, rootPart = getCharacterState()
+
+    if not rootPart or not targetPosition then
         return false
     end
 
-    local fieldId = resolveFieldId(
-        areaData,
-        box,
-        currentField
-    )
+    local visualDistance = (
+        rootPart.Position - targetPosition
+    ).Magnitude
 
-    if fieldId == nil then
-        warn("[Boxes] Could not resolve field ID")
-        clearTarget()
+    local dataDistance = (
+        rootPart.Position - box.CFrame.Position
+    ).Magnitude
+
+    if visualDistance > attackRange
+        or dataDistance > attackRange + 3
+    then
         return false
     end
 
@@ -683,14 +815,14 @@ local function runAutoFarmStep()
 
     local box,
         areaData,
-        visual,
+        fieldId,
+        targetPosition,
         distance,
-        candidateCount,
-        currentField = getLockedBox()
+        candidateCount = getLockedBox()
 
-    if box and visual then
+    if box and targetPosition and fieldId then
         if distance > attackRange then
-            moveToTarget(box, distance)
+            moveToTarget(targetPosition, distance)
         else
             local _, humanoid, rootPart = getCharacterState()
 
@@ -699,12 +831,14 @@ local function runAutoFarmStep()
             end
 
             clearMovement()
-            attackBox(
+
+            if not attackBox(
                 box,
-                areaData,
-                currentField,
-                distance
-            )
+                fieldId,
+                targetPosition
+            ) then
+                clearTarget()
+            end
         end
     end
 
@@ -712,7 +846,9 @@ local function runAutoFarmStep()
         lastStatusAt = os.clock()
 
         print(
-            "[Boxes] Candidates",
+            "[Boxes] Field",
+            fieldId or "none",
+            "visible",
             candidateCount,
             "target",
             box and box.Id or "none",
@@ -755,12 +891,12 @@ MainTab:Toggle("Auto Walk To Boxes", true, function(state)
     end
 end)
 
-MainTab:Slider("Attack Range", 12, 25, 24, function(value)
-    attackRange = math.clamp(value, 12, 25)
+MainTab:Slider("Attack Range", 12, 24, 23, function(value)
+    attackRange = math.clamp(value, 12, 24)
     stopDistance = math.clamp(
         attackRange - 8,
         5,
-        17
+        16
     )
 end)
 
