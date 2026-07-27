@@ -1,33 +1,32 @@
--- [[ Сервисы ]]
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+
 local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
+local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
 local CoreGui = game:GetService("CoreGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualUser = game:GetService("VirtualUser")
 local RunService = game:GetService("RunService")
 
--- [[ Байпасы (Anti-Kick & Anti-Detect UI) ]]
-local oldNamecall
-oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-    if self == LocalPlayer and getnamecallmethod() == "Kick" then
-        return nil
-    end
-    return oldNamecall(self, ...)
+local UI_URL = "https://gist.githubusercontent.com/MjContiga1/7830931c94f8ba912103072abd21df0b/raw/b41e5d567895d11aacc4b419091d29b504c985c6/Bypass.lua"
+
+assert(type(loadstring) == "function", "[Loader] Этот исполнитель не поддерживает loadstring")
+
+local httpOk, uiSource = pcall(function()
+    return game:HttpGet(UI_URL)
 end)
+assert(httpOk and type(uiSource) == "string" and #uiSource > 0,
+    "[Loader] Не удалось скачать UI: " .. tostring(uiSource))
 
-local mt = getrawmetatable(game)
-setreadonly(mt, false)
-local oldIndex = mt.__index
-mt.__index = function(self, key)
-    if self == CoreGui and key == "AdvancedUI" then
-        return nil
-    end
-    return oldIndex(self, key)
-end
-setreadonly(mt, true)
+local uiChunk, compileError = loadstring(uiSource)
+assert(uiChunk, "[Loader] Ошибка компиляции UI: " .. tostring(compileError))
 
--- [[ Загрузка UI Библиотеки ]]
-local Library = loadstring(game:HttpGet("https://gist.githubusercontent.com/MjContiga1/7830931c94f8ba912103072abd21df0b/raw/b41e5d567895d11aacc4b419091d29b504c985c6/Bypass.lua"))()
+local libraryOk, Library = pcall(uiChunk)
+assert(libraryOk and type(Library) == "table",
+    "[Loader] Ошибка запуска UI: " .. tostring(Library))
+
+print("[Loader] UI-библиотека загружена")
 
 local Window = Library:Window("Unboxing Simulator • By Mjcontegazxc", {UseScreenGui = true})
 local MainTab = Window:Tab({"Main", "rbxassetid://7733960981"})
@@ -35,9 +34,6 @@ local AchievementsTab = Window:Tab({"Achievements", "rbxassetid://7733673987"})
 local RewardTab = Window:Tab({"Reward", "rbxassetid://7733946818"})
 local LocalPlayerTab = Window:Tab({"LocalPlayer", "rbxassetid://7743875962"})
 
--- ==========================================
--- БЕЗОПАСНАЯ ФОНОВАЯ ЗАГРУЗКА (БЕЗ WaitForChild)
--- ==========================================
 local RE = nil
 local RF = nil
 local BoxController = nil
@@ -55,7 +51,12 @@ task.spawn(function()
     local controllers = ReplicatedStorage:FindFirstChild("Controllers")
     
     while not controllers:FindFirstChild("BoxController") do task.wait(0.5) end
-    BoxController = require(controllers:FindFirstChild("BoxController"))
+    local requireOk, controllerOrError = pcall(require, controllers:FindFirstChild("BoxController"))
+    if requireOk then
+        BoxController = controllerOrError
+    else
+        warn("[Loader] BoxController не загрузился:", controllerOrError)
+    end
     
     while not ReplicatedStorage:FindFirstChild("RE") do task.wait(0.5) end
     RE = ReplicatedStorage:FindFirstChild("RE")
@@ -66,66 +67,13 @@ task.spawn(function()
     print("[Success] ZAP, BoxController, RE и RF успешно загружены!")
 end)
 
--- ==========================================
--- ZAP ЛОГГЕР (Для дебага)
--- ==========================================
-task.spawn(function()
-    while not ZAPFolder do task.wait(0.5) end
-    
-    local oldNamecallZAP
-    oldNamecallZAP = hookmetamethod(game, "__namecall", function(self, ...)
-        if typeof(self) == "Instance" and self:IsDescendantOf(ZAPFolder) and getnamecallmethod() == "FireServer" then
-            local args = {...}
-            if type(args[1]) == "buffer" then
-                local len = buffer.len(args[1])
-                local str = ""
-                for i = 0, len - 1 do
-                    str = str .. string.format("\\x%02X", buffer.readu8(args[1], i))
-                end
-                print(`[ZAP Logger] {self.Name}:FireServer Buffer:`, str)
-            end
-        end
-        return oldNamecallZAP(self, ...)
-    end)
-    print("[ZAP Logger] Активирован! Ударьте по боксу вручную, чтобы увидеть пакет.")
-end)
-
--- ==========================================
--- MAIN TAB
--- ==========================================
 MainTab:Label("MAIN STATS", "rbxassetid://7733960981")
 
 local TimeParagraph = MainTab:Paragraph("Текущее время появится здесь")
-TimeParagraph:SetUpdateFunction(function()
-    return "Текущее время: " .. os.date("%H:%M:%S")
-end)
-
 local StatsParagraph = MainTab:Paragraph("Загрузка статистики...")
-StatsParagraph:SetUpdateFunction(function()
-    local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
-    if not leaderstats then
-        return "❌ Leaderstats не найдены!\nОжидайте загрузки игры..."
-    end
-    
-    local stats = "📊 REAL-TIME STATS:\n\n"
-    local dmg = leaderstats:FindFirstChild("💥Dmg/s")
-    if dmg then stats = stats .. "• 💥 Урон/Сек: " .. tostring(dmg.Value) .. "\n" end
-    
-    local coins = leaderstats:FindFirstChild("🔷World 1 Coins")
-    if coins then stats = stats .. "• 🔷 Монеты: " .. tostring(coins.Value) .. "\n" end
-    
-    local lvlBonus = leaderstats:FindFirstChild("🎖️Lvl Bonus")
-    if lvlBonus then stats = stats .. "• 🎖️ Бонус уровня: " .. tostring(lvlBonus.Value) .. "\n" end
-    
-    local boxes = leaderstats:FindFirstChild("📦Boxes")
-    if boxes then stats = stats .. "• 📦 Открыто боксов: " .. tostring(boxes.Value) .. "\n" end
-    
-    return stats .. "\n⏰ Последнее обновление: " .. os.date("%H:%M:%S")
-end)
 
 MainTab:Label("Boxes", "rbxassetid://7733752575")
 
--- Логика авто-атаки боксов
 local autoAttackBoxes = false
 local attackRange = 50
 local attackSpeed = 0.1
@@ -133,9 +81,19 @@ local attackedBoxes = {}
 local boxDebugLogged = false
 local missingIdLogged = false
 
+local bufferWarningShown = false
+
 local function attackBox(fieldId, boxId)
     if not BoxesZAP then return end
     if not fieldId or not boxId then return end
+
+    if type(buffer) ~= "table" or type(buffer.create) ~= "function" then
+        if not bufferWarningShown then
+            warn("[Boxes] В этом исполнителе отсутствует Luau buffer API")
+            bufferWarningShown = true
+        end
+        return
+    end
     
     fieldId = tonumber(fieldId)
     boxId = tonumber(boxId)
@@ -251,8 +209,9 @@ MainTab:Slider("Attack Range", 10, 100, 50, function(value)
     attackRange = value
 end)
 
-MainTab:Slider("Attack Speed", 0.05, 2, 0.1, function(value)
-    attackSpeed = value
+MainTab:Slider("Attack Delay (ms)", 50, 2000, 100, function(value)
+    -- UI округляет значения до целых, поэтому используем миллисекунды.
+    attackSpeed = math.max(value / 1000, 0.05)
 end)
 
 MainTab:Label("Weapons", "rbxassetid://7733955511")
@@ -357,14 +316,7 @@ task.spawn(function()
 end)
 
 local EnchantStatus = MainTab:Paragraph("Статус зачарования шляпы появится здесь...")
-EnchantStatus:SetUpdateFunction(function()
-    local status = "✨ AUTO ENCHANT HAT STATUS:\n\n"
-    status = status .. "🔮 Auto Enchant: " .. (autoEnchantHat and "✅ ENABLED" or "❌ DISABLED") .. "\n"
-    status = status .. "⏰ Enchant Delay: " .. enchantDelay .. " сек.\n"
-    status = status .. "🎩 Зачарование: Hat\n\n"
-    status = status .. "⚠️ Примечание: Это автоматически зачаровывает вашу шляпу"
-    return status
-end)
+-- EnchantStatus обновляется общим ограниченным циклом ниже.
 
 MainTab:Button("⚡ Enchant Hat Now", function()
     enchantHat()
@@ -518,14 +470,7 @@ RewardTab:Button("⚡ Claim All Rewards Now", function()
 end)
 
 local RewardStatus = RewardTab:Paragraph("Статус наград появится здесь...")
-RewardStatus:SetUpdateFunction(function()
-    local status = "🎁 AUTO CLAIM STATUS:\n\n"
-    status = status .. "📜 Quest Rewards: " .. (autoClaimQuests and "✅ ENABLED" or "❌ DISABLED") .. "\n"
-    status = status .. "⏰ Playtime Rewards: " .. (autoClaimPlaytime and "✅ ENABLED" or "❌ DISABLED") .. "\n"
-    status = status .. "🔓 Login Rewards: " .. (autoClaimLogin and "✅ ENABLED" or "❌ DISABLED") .. "\n\n"
-    status = status .. "⏰ Last Check: " .. os.date("%H:%M:%S")
-    return status
-end)
+-- RewardStatus обновляется общим ограниченным циклом ниже.
 
 -- ==========================================
 -- LOCAL PLAYER TAB
@@ -583,6 +528,61 @@ end)
 
 LocalPlayerTab:Slider("Gravity Delay", 1, 5, 1, function(value)
     workspace.Gravity = 196.2 * value
+end)
+
+
+-- ==========================================
+-- ОГРАНИЧЕННОЕ ОБНОВЛЕНИЕ UI
+-- ==========================================
+local function buildStatsText()
+    local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
+    if not leaderstats then
+        return "❌ Leaderstats не найдены!\nОжидайте загрузки игры..."
+    end
+
+    local stats = "📊 REAL-TIME STATS:\n\n"
+    local dmg = leaderstats:FindFirstChild("💥Dmg/s")
+    if dmg then stats = stats .. "• 💥 Урон/Сек: " .. tostring(dmg.Value) .. "\n" end
+
+    local coins = leaderstats:FindFirstChild("🔷World 1 Coins")
+    if coins then stats = stats .. "• 🔷 Монеты: " .. tostring(coins.Value) .. "\n" end
+
+    local lvlBonus = leaderstats:FindFirstChild("🎖️Lvl Bonus")
+    if lvlBonus then stats = stats .. "• 🎖️ Бонус уровня: " .. tostring(lvlBonus.Value) .. "\n" end
+
+    local boxes = leaderstats:FindFirstChild("📦Boxes")
+    if boxes then stats = stats .. "• 📦 Открыто боксов: " .. tostring(boxes.Value) .. "\n" end
+
+    return stats .. "\n⏰ Последнее обновление: " .. os.date("%H:%M:%S")
+end
+
+local function buildEnchantStatus()
+    local status = "✨ AUTO ENCHANT HAT STATUS:\n\n"
+    status = status .. "🔮 Auto Enchant: " .. (autoEnchantHat and "✅ ENABLED" or "❌ DISABLED") .. "\n"
+    status = status .. "⏰ Enchant Delay: " .. tostring(enchantDelay) .. " сек.\n"
+    status = status .. "🎩 Зачарование: Hat\n\n"
+    status = status .. "⚠️ Примечание: Это автоматически зачаровывает вашу шляпу"
+    return status
+end
+
+local function buildRewardStatus()
+    local status = "🎁 AUTO CLAIM STATUS:\n\n"
+    status = status .. "📜 Quest Rewards: " .. (autoClaimQuests and "✅ ENABLED" or "❌ DISABLED") .. "\n"
+    status = status .. "⏰ Playtime Rewards: " .. (autoClaimPlaytime and "✅ ENABLED" or "❌ DISABLED") .. "\n"
+    status = status .. "🔓 Login Rewards: " .. (autoClaimLogin and "✅ ENABLED" or "❌ DISABLED") .. "\n\n"
+    status = status .. "⏰ Last Check: " .. os.date("%H:%M:%S")
+    return status
+end
+
+task.spawn(function()
+    while task.wait(1) do
+        pcall(function()
+            TimeParagraph:SetText("Текущее время: " .. os.date("%H:%M:%S"))
+            StatsParagraph:SetText(buildStatsText())
+            EnchantStatus:SetText(buildEnchantStatus())
+            RewardStatus:SetText(buildRewardStatus())
+        end)
+    end
 end)
 
 print("[Success] Unboxing Simulator Script Fully Loaded!")
