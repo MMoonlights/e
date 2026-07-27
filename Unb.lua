@@ -37,10 +37,10 @@ local LocalPlayerTab = Window:Tab({"LocalPlayer", "rbxassetid://7743875962"})
 local RE = ReplicatedStorage:FindFirstChild("RE")
 local RF = ReplicatedStorage:FindFirstChild("RF")
 local BoxController = nil
+local BoxesAPI = nil
 local boxAreaState = nil
-local SetTarget = nil
-local Attack = nil
-local RemoveTarget = nil
+local fieldList = {}
+local fieldsById = {}
 
 local function readUpvalue(target, index)
     local reader = debug and debug.getupvalue or getupvalue
@@ -62,76 +62,38 @@ local function readUpvalue(target, index)
     return first
 end
 
-local function getFunctionInfo(target)
-    local name = nil
-    local source = nil
-
-    if debug and type(debug.getinfo) == "function" then
-        local ok, info = pcall(debug.getinfo, target)
-
-        if ok and type(info) == "table" then
-            name = info.name
-            source = info.source
-        end
+local function loadFieldList()
+    if not BoxesAPI
+        or type(BoxesAPI.GetFieldList) ~= "table"
+        or type(BoxesAPI.GetFieldList.Call) ~= "function"
+    then
+        return
     end
 
-    if debug and type(debug.info) == "function" then
-        if not name then
-            local ok, value = pcall(debug.info, target, "n")
+    local ok, result = pcall(BoxesAPI.GetFieldList.Call)
 
-            if ok then
-                name = value
-            end
-        end
-
-        if not source then
-            local ok, value = pcall(debug.info, target, "s")
-
-            if ok then
-                source = value
-            end
-        end
+    if not ok or type(result) ~= "table" then
+        warn("[Loader] Failed to load field list:", result)
+        return
     end
 
-    return tostring(name or ""), tostring(source or "")
-end
+    fieldList = result
+    fieldsById = {}
 
-local function resolveAttackFunctions()
-    if type(getgc) ~= "function" then
-        return false
-    end
-
-    for _, candidate in next, getgc(false) do
-        if type(candidate) == "function"
-            and (type(islclosure) ~= "function" or islclosure(candidate))
-        then
-            local name, source = getFunctionInfo(candidate)
-            local relevantSource = source == ""
-                or string.find(source, "BoxController", 1, true)
-                or string.find(source, "Controllers", 1, true)
-
-            if relevantSource then
-                if name == "SetTarget" and not SetTarget then
-                    SetTarget = candidate
-                elseif name == "Attack" and not Attack then
-                    Attack = candidate
-                elseif name == "RemoveTarget" and not RemoveTarget then
-                    RemoveTarget = candidate
-                end
-            end
+    for _, field in pairs(fieldList) do
+        if type(field) == "table" and tonumber(field.Id) ~= nil then
+            fieldsById[tonumber(field.Id)] = field
         end
     end
-
-    return SetTarget ~= nil and Attack ~= nil
 end
 
 task.spawn(function()
     local controllers = ReplicatedStorage:WaitForChild("Controllers")
-    local moduleScript = controllers:WaitForChild("BoxController")
-    local ok, result = pcall(require, moduleScript)
+    local boxModule = controllers:WaitForChild("BoxController")
+    local boxOk, boxResult = pcall(require, boxModule)
 
-    if ok and type(result) == "table" then
-        BoxController = result
+    if boxOk and type(boxResult) == "table" then
+        BoxController = boxResult
 
         if type(BoxController.GetClosestBox) == "function" then
             boxAreaState = readUpvalue(
@@ -140,27 +102,29 @@ task.spawn(function()
             )
         end
     else
-        warn("[Loader] Failed to load BoxController:", result)
+        warn("[Loader] Failed to load BoxController:", boxResult)
     end
 
-    for _ = 1, 30 do
-        if resolveAttackFunctions() then
-            break
-        end
+    local modules = ReplicatedStorage:WaitForChild("Modules")
+    local remotes = modules:WaitForChild("Remotes")
+    local boxesModule = remotes:WaitForChild("Boxes")
+    local apiOk, apiResult = pcall(require, boxesModule)
 
-        task.wait(0.5)
+    if apiOk and type(apiResult) == "table" then
+        BoxesAPI = apiResult
+        loadFieldList()
+    else
+        warn("[Loader] Failed to load Boxes API:", apiResult)
     end
 
-    if BoxController and type(boxAreaState) == "table" then
+    if type(boxAreaState) == "table" then
         print("[Success] BoxController state loaded")
     else
         warn("[Loader] BoxController state unavailable")
     end
 
-    if SetTarget and Attack then
-        print("[Success] Attack functions resolved")
-    else
-        warn("[Loader] Attack functions unavailable")
+    if BoxesAPI then
+        print("[Success] Boxes API loaded")
     end
 end)
 
@@ -176,7 +140,8 @@ local autoAttackBoxes = false
 local attackRange = 27
 local attacksPerSecond = 5
 local lastStatusAt = 0
-local selectedTarget = nil
+local lockedBox = nil
+local lockedArea = nil
 
 local function getRootPart()
     local character = LocalPlayer.Character
@@ -197,22 +162,92 @@ local function isBoxValid(box)
         and not box.IsOpen
 end
 
-local function getCurrentTarget()
-    if type(Attack) ~= "function" then
+local function fieldContainsPosition(field, position)
+    if type(field) ~= "table"
+        or typeof(field.Position) ~= "Vector3"
+        or typeof(field.Size) ~= "Vector3"
+    then
+        return false
+    end
+
+    local delta = position - field.Position
+    local halfX = field.Size.X * 0.5 + 3
+    local halfY = math.max(field.Size.Y * 0.5, 100)
+    local halfZ = field.Size.Z * 0.5 + 3
+
+    return math.abs(delta.X) <= halfX
+        and math.abs(delta.Y) <= halfY
+        and math.abs(delta.Z) <= halfZ
+end
+
+local function resolveFieldId(areaData, box)
+    local candidates = {
+        areaData and areaData.Id,
+        areaData and areaData.FieldId,
+        areaData and areaData.fieldId,
+        box and box.FieldId,
+        box and box.fieldId
+    }
+
+    if box and type(box.Field) == "table" then
+        table.insert(candidates, box.Field.Id)
+        table.insert(candidates, box.Field.FieldId)
+    end
+
+    for _, candidate in ipairs(candidates) do
+        local fieldId = tonumber(candidate)
+
+        if fieldId ~= nil then
+            return fieldId
+        end
+    end
+
+    if not box or typeof(box.CFrame) ~= "CFrame" then
         return nil
     end
 
-    return readUpvalue(Attack, 1)
+    local position = box.CFrame.Position
+    local areaType = areaData and areaData.FieldTypeId
+    local bestFieldId = nil
+    local bestDistance = math.huge
+
+    for _, field in pairs(fieldList) do
+        if type(field) == "table"
+            and tonumber(field.Id) ~= nil
+            and typeof(field.Position) == "Vector3"
+        then
+            local typeMatches = areaType == nil
+                or field.FieldTypeId == areaType
+
+            if typeMatches and fieldContainsPosition(field, position) then
+                return tonumber(field.Id)
+            end
+
+            if typeMatches then
+                local distance = (
+                    position - field.Position
+                ).Magnitude
+
+                if distance < bestDistance then
+                    bestDistance = distance
+                    bestFieldId = tonumber(field.Id)
+                end
+            end
+        end
+    end
+
+    return bestFieldId
 end
 
 local function getNearestBox()
     local rootPart = getRootPart()
 
     if not rootPart or type(boxAreaState) ~= "table" then
-        return nil, math.huge, 0
+        return nil, nil, math.huge, 0
     end
 
     local nearestBox = nil
+    local nearestArea = nil
     local nearestDistance = math.huge
     local nearbyCount = 0
 
@@ -232,6 +267,7 @@ local function getNearestBox()
                         if distance < nearestDistance then
                             nearestDistance = distance
                             nearestBox = box
+                            nearestArea = areaData
                         end
                     end
                 end
@@ -239,74 +275,72 @@ local function getNearestBox()
         end
     end
 
-    return nearestBox, nearestDistance, nearbyCount
+    return nearestBox, nearestArea, nearestDistance, nearbyCount
 end
 
-local function clearTarget()
-    selectedTarget = nil
-
-    if type(RemoveTarget) == "function" then
-        pcall(RemoveTarget)
-    end
-end
-
-local function updateTarget()
+local function getLockedBox()
     local rootPart = getRootPart()
 
     if not rootPart then
-        clearTarget()
-        return nil, math.huge, 0
+        return nil, nil, math.huge
     end
 
-    local currentTarget = getCurrentTarget()
-
-    if isBoxValid(currentTarget) then
+    if isBoxValid(lockedBox) then
         local distance = (
-            rootPart.Position - currentTarget.CFrame.Position
+            rootPart.Position - lockedBox.CFrame.Position
         ).Magnitude
 
         if distance <= attackRange then
-            selectedTarget = currentTarget
-            local _, _, nearbyCount = getNearestBox()
-            return currentTarget, distance, nearbyCount
+            return lockedBox, lockedArea, distance
         end
     end
 
-    if currentTarget ~= nil then
-        clearTarget()
+    lockedBox = nil
+    lockedArea = nil
+
+    local box, areaData, distance = getNearestBox()
+
+    if box then
+        lockedBox = box
+        lockedArea = areaData
     end
 
-    local nearestBox, distance, nearbyCount = getNearestBox()
-
-    if nearestBox and type(SetTarget) == "function" then
-        local ok = pcall(SetTarget, nearestBox)
-
-        if ok then
-            selectedTarget = nearestBox
-        end
-    end
-
-    return selectedTarget, distance, nearbyCount
+    return lockedBox, lockedArea, distance
 end
 
-local function attackTarget()
-    if not autoAttackBoxes then
-        return
-    end
-
-    if not BoxController
-        or type(boxAreaState) ~= "table"
-        or type(SetTarget) ~= "function"
-        or type(Attack) ~= "function"
+local function attackNearestBox()
+    if not autoAttackBoxes
+        or not BoxesAPI
+        or type(BoxesAPI.AttackBox) ~= "table"
+        or type(BoxesAPI.AttackBox.Fire) ~= "function"
     then
-        resolveAttackFunctions()
         return
     end
 
-    local target, distance, nearbyCount = updateTarget()
+    local box, areaData, distance = getLockedBox()
+    local _, _, _, nearbyCount = getNearestBox()
 
-    if target and isBoxValid(target) then
-        pcall(Attack)
+    if box then
+        local fieldId = resolveFieldId(areaData, box)
+
+        if fieldId ~= nil then
+            local ok, result = pcall(
+                BoxesAPI.AttackBox.Fire,
+                fieldId,
+                tonumber(box.Id),
+                workspace:GetServerTimeNow()
+            )
+
+            if not ok then
+                warn("[Boxes] Attack failed:", result)
+                lockedBox = nil
+                lockedArea = nil
+            end
+        else
+            warn("[Boxes] Could not resolve field ID")
+            lockedBox = nil
+            lockedArea = nil
+        end
     end
 
     if os.clock() - lastStatusAt >= 2 then
@@ -316,27 +350,26 @@ local function attackTarget()
             "[Boxes] Nearby",
             nearbyCount,
             "target",
-            target and target.Id or "none",
+            box and box.Id or "none",
             "distance",
-            target and string.format("%.1f", distance) or "-"
+            box and string.format("%.1f", distance) or "-"
         )
     end
 end
 
 MainTab:Toggle("Auto Damage Nearby Boxes", false, function(state)
     autoAttackBoxes = state
+    lockedBox = nil
+    lockedArea = nil
 
-    if not state then
-        clearTarget()
-        return
+    if state then
+        task.spawn(function()
+            while autoAttackBoxes do
+                attackNearestBox()
+                task.wait(1 / attacksPerSecond)
+            end
+        end)
     end
-
-    task.spawn(function()
-        while autoAttackBoxes do
-            attackTarget()
-            task.wait(1 / attacksPerSecond)
-        end
-    end)
 end)
 
 MainTab:Slider("Attack Range", 10, 28, 27, function(value)
