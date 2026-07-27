@@ -146,6 +146,8 @@ local lastStatusAt = 0
 local lastMoveAt = 0
 local lastFieldId = nil
 local lastFieldTypeId = nil
+local farmFieldId = nil
+local farmFieldTypeId = nil
 local lockedBox = nil
 local lockedArea = nil
 local lockedFieldId = nil
@@ -204,6 +206,10 @@ local function fieldContainsPosition(field, position, padding)
 end
 
 local function getCurrentField(position)
+    if farmFieldId and fieldsById[farmFieldId] then
+        return fieldsById[farmFieldId]
+    end
+
     local containedField = nil
     local containedDistance = math.huge
     local nearestField = nil
@@ -225,7 +231,7 @@ local function getCurrentField(position)
                 nearestField = field
             end
 
-            if fieldContainsPosition(field, position, 80)
+            if fieldContainsPosition(field, position, 30)
                 and horizontalDistance < containedDistance
             then
                 containedDistance = horizontalDistance
@@ -234,18 +240,7 @@ local function getCurrentField(position)
         end
     end
 
-    local selectedField = containedField
-
-    if not selectedField
-        and lastFieldId
-        and fieldsById[lastFieldId]
-    then
-        selectedField = fieldsById[lastFieldId]
-    end
-
-    if not selectedField then
-        selectedField = nearestField
-    end
+    local selectedField = containedField or nearestField
 
     if selectedField then
         lastFieldId = tonumber(selectedField.Id)
@@ -555,7 +550,8 @@ local function getCandidateBoxes()
     end
 
     local currentFieldId = tonumber(currentField.Id)
-    local currentType = currentField.FieldTypeId
+    local currentType = farmFieldTypeId
+        or currentField.FieldTypeId
         or lastFieldTypeId
     local candidates = {}
 
@@ -587,7 +583,7 @@ local function getCandidateBoxes()
                         if fieldContainsPosition(
                             currentField,
                             dataPosition,
-                            40
+                            5
                         ) then
                             local distance = (
                                 rootPart.Position - dataPosition
@@ -753,6 +749,35 @@ local function getLockedBox()
     return nil, nil, nil, nil, math.huge, 0
 end
 
+local function clampToFarmField(position)
+    local field = farmFieldId and fieldsById[farmFieldId]
+
+    if not field
+        or typeof(field.Position) ~= "Vector3"
+        or typeof(field.Size) ~= "Vector3"
+    then
+        return position
+    end
+
+    local margin = 4
+    local halfX = math.max(field.Size.X * 0.5 - margin, 1)
+    local halfZ = math.max(field.Size.Z * 0.5 - margin, 1)
+
+    return Vector3.new(
+        math.clamp(
+            position.X,
+            field.Position.X - halfX,
+            field.Position.X + halfX
+        ),
+        position.Y,
+        math.clamp(
+            position.Z,
+            field.Position.Z - halfZ,
+            field.Position.Z + halfZ
+        )
+    )
+end
+
 local function getApproachPosition(rootPosition, targetPosition)
     local offset = rootPosition - targetPosition
     local horizontal = Vector3.new(offset.X, 0, offset.Z)
@@ -761,11 +786,13 @@ local function getApproachPosition(rootPosition, targetPosition)
         horizontal = Vector3.new(1, 0, 0)
     end
 
-    return Vector3.new(
+    local destination = Vector3.new(
         targetPosition.X,
         rootPosition.Y,
         targetPosition.Z
     ) + horizontal.Unit * stopDistance
+
+    return clampToFarmField(destination)
 end
 
 local function moveToTarget(targetPosition, distance)
@@ -871,7 +898,7 @@ local function runAutoFarmStep()
 
         print(
             "[Boxes] Field",
-            fieldId or lastFieldId or "none",
+            fieldId or farmFieldId or lastFieldId or "none",
             "available",
             candidateCount,
             "target",
@@ -888,10 +915,35 @@ local function runAutoFarmStep()
 end
 
 MainTab:Toggle("Auto Farm Boxes", false, function(state)
-    autoAttackBoxes = state
     clearTarget()
 
     if state then
+        farmFieldId = nil
+        farmFieldTypeId = nil
+
+        local _, _, rootPart = getCharacterState()
+        local field = rootPart
+            and getCurrentField(rootPart.Position)
+            or nil
+
+        if not field then
+            warn("[Boxes] Could not lock the current field")
+            autoAttackBoxes = false
+            return
+        end
+
+        farmFieldId = tonumber(field.Id)
+        farmFieldTypeId = field.FieldTypeId
+        lastFieldId = farmFieldId
+        lastFieldTypeId = farmFieldTypeId
+        autoAttackBoxes = true
+
+        print(
+            "[Boxes] Locked field",
+            farmFieldId,
+            farmFieldTypeId or ""
+        )
+
         task.spawn(function()
             while autoAttackBoxes do
                 runAutoFarmStep()
@@ -899,6 +951,10 @@ MainTab:Toggle("Auto Farm Boxes", false, function(state)
             end
         end)
     else
+        autoAttackBoxes = false
+        farmFieldId = nil
+        farmFieldTypeId = nil
+
         local _, humanoid, rootPart = getCharacterState()
 
         if humanoid and rootPart then
