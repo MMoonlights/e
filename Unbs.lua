@@ -8,6 +8,7 @@ local CoreGui = game:GetService("CoreGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualUser = game:GetService("VirtualUser")
 local RunService = game:GetService("RunService")
+local PathfindingService = game:GetService("PathfindingService")
 
 local UI_URL = "https://gist.githubusercontent.com/MjContiga1/7830931c94f8ba912103072abd21df0b/raw/b41e5d567895d11aacc4b419091d29b504c985c6/Bypass.lua"
 
@@ -137,19 +138,28 @@ local StatsParagraph = MainTab:Paragraph("Loading statistics...")
 MainTab:Label("Boxes", "rbxassetid://7733752575")
 
 local autoAttackBoxes = false
+local autoWalkToBoxes = true
 local attackRange = 27
+local stopDistance = 18
 local attacksPerSecond = 5
 local lastStatusAt = 0
+local lastMoveAt = 0
+local lastPathAt = 0
 local lockedBox = nil
 local lockedArea = nil
+local currentPath = nil
+local currentWaypoints = nil
+local currentWaypointIndex = 1
 
-local function getRootPart()
+local function getCharacterState()
     local character = LocalPlayer.Character
-
-    return character and (
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local rootPart = character and (
         character:FindFirstChild("HumanoidRootPart")
         or character.PrimaryPart
     )
+
+    return character, humanoid, rootPart
 end
 
 local function isBoxValid(box)
@@ -240,7 +250,7 @@ local function resolveFieldId(areaData, box)
 end
 
 local function getNearestBox()
-    local rootPart = getRootPart()
+    local _, _, rootPart = getCharacterState()
 
     if not rootPart or type(boxAreaState) ~= "table" then
         return nil, nil, math.huge, 0
@@ -249,7 +259,7 @@ local function getNearestBox()
     local nearestBox = nil
     local nearestArea = nil
     local nearestDistance = math.huge
-    local nearbyCount = 0
+    local boxCount = 0
 
     for _, areaData in next, boxAreaState do
         if type(areaData) == "table"
@@ -257,32 +267,43 @@ local function getNearestBox()
         then
             for _, box in next, areaData.Boxes do
                 if isBoxValid(box) then
+                    boxCount += 1
+
                     local distance = (
                         rootPart.Position - box.CFrame.Position
                     ).Magnitude
 
-                    if distance <= attackRange then
-                        nearbyCount += 1
-
-                        if distance < nearestDistance then
-                            nearestDistance = distance
-                            nearestBox = box
-                            nearestArea = areaData
-                        end
+                    if distance < nearestDistance then
+                        nearestDistance = distance
+                        nearestBox = box
+                        nearestArea = areaData
                     end
                 end
             end
         end
     end
 
-    return nearestBox, nearestArea, nearestDistance, nearbyCount
+    return nearestBox, nearestArea, nearestDistance, boxCount
+end
+
+local function clearMovement()
+    currentPath = nil
+    currentWaypoints = nil
+    currentWaypointIndex = 1
+end
+
+local function clearTarget()
+    lockedBox = nil
+    lockedArea = nil
+    clearMovement()
 end
 
 local function getLockedBox()
-    local rootPart = getRootPart()
+    local _, _, rootPart = getCharacterState()
 
     if not rootPart then
-        return nil, nil, math.huge
+        clearTarget()
+        return nil, nil, math.huge, 0
     end
 
     if isBoxValid(lockedBox) then
@@ -290,25 +311,159 @@ local function getLockedBox()
             rootPart.Position - lockedBox.CFrame.Position
         ).Magnitude
 
-        if distance <= attackRange then
-            return lockedBox, lockedArea, distance
-        end
+        local _, _, _, boxCount = getNearestBox()
+        return lockedBox, lockedArea, distance, boxCount
     end
 
-    lockedBox = nil
-    lockedArea = nil
+    clearTarget()
 
-    local box, areaData, distance = getNearestBox()
+    local box, areaData, distance, boxCount = getNearestBox()
 
     if box then
         lockedBox = box
         lockedArea = areaData
     end
 
-    return lockedBox, lockedArea, distance
+    return lockedBox, lockedArea, distance, boxCount
 end
 
-local function attackNearestBox()
+local function getApproachPosition(rootPosition, boxPosition)
+    local offset = rootPosition - boxPosition
+    local horizontal = Vector3.new(offset.X, 0, offset.Z)
+
+    if horizontal.Magnitude < 0.1 then
+        horizontal = Vector3.new(1, 0, 0)
+    end
+
+    return boxPosition
+        + horizontal.Unit * stopDistance
+        + Vector3.new(0, 2, 0)
+end
+
+local function computePath(destination)
+    local _, humanoid, rootPart = getCharacterState()
+
+    if not humanoid or not rootPart then
+        return false
+    end
+
+    local path = PathfindingService:CreatePath({
+        AgentRadius = 2,
+        AgentHeight = 5,
+        AgentCanJump = true,
+        AgentCanClimb = true,
+        WaypointSpacing = 5
+    })
+
+    local ok = pcall(function()
+        path:ComputeAsync(rootPart.Position, destination)
+    end)
+
+    if not ok or path.Status ~= Enum.PathStatus.Success then
+        return false
+    end
+
+    local waypoints = path:GetWaypoints()
+
+    if #waypoints == 0 then
+        return false
+    end
+
+    currentPath = path
+    currentWaypoints = waypoints
+    currentWaypointIndex = math.min(2, #waypoints)
+    lastPathAt = os.clock()
+
+    return true
+end
+
+local function moveToTarget(box, distance)
+    if not autoWalkToBoxes or not box then
+        return
+    end
+
+    local _, humanoid, rootPart = getCharacterState()
+
+    if not humanoid or not rootPart then
+        return
+    end
+
+    if distance <= stopDistance then
+        humanoid:MoveTo(rootPart.Position)
+        clearMovement()
+        return
+    end
+
+    local destination = getApproachPosition(
+        rootPart.Position,
+        box.CFrame.Position
+    )
+
+    if not currentWaypoints
+        or currentWaypointIndex > #currentWaypoints
+        or os.clock() - lastPathAt >= 2
+    then
+        if not computePath(destination) then
+            if os.clock() - lastMoveAt >= 0.25 then
+                lastMoveAt = os.clock()
+                humanoid:MoveTo(destination)
+            end
+
+            return
+        end
+    end
+
+    local waypoint = currentWaypoints[currentWaypointIndex]
+
+    if not waypoint then
+        clearMovement()
+        return
+    end
+
+    if waypoint.Action == Enum.PathWaypointAction.Jump then
+        humanoid.Jump = true
+    end
+
+    if os.clock() - lastMoveAt >= 0.2 then
+        lastMoveAt = os.clock()
+        humanoid:MoveTo(waypoint.Position)
+    end
+
+    if (rootPart.Position - waypoint.Position).Magnitude <= 4 then
+        currentWaypointIndex += 1
+    end
+end
+
+local function attackBox(box, areaData, distance)
+    if distance > attackRange then
+        return false
+    end
+
+    local fieldId = resolveFieldId(areaData, box)
+
+    if fieldId == nil then
+        warn("[Boxes] Could not resolve field ID")
+        clearTarget()
+        return false
+    end
+
+    local ok, result = pcall(
+        BoxesAPI.AttackBox.Fire,
+        fieldId,
+        tonumber(box.Id),
+        workspace:GetServerTimeNow()
+    )
+
+    if not ok then
+        warn("[Boxes] Attack failed:", result)
+        clearTarget()
+        return false
+    end
+
+    return true
+end
+
+local function runAutoFarmStep()
     if not autoAttackBoxes
         or not BoxesAPI
         or type(BoxesAPI.AttackBox) ~= "table"
@@ -317,29 +472,20 @@ local function attackNearestBox()
         return
     end
 
-    local box, areaData, distance = getLockedBox()
-    local _, _, _, nearbyCount = getNearestBox()
+    local box, areaData, distance, boxCount = getLockedBox()
 
     if box then
-        local fieldId = resolveFieldId(areaData, box)
-
-        if fieldId ~= nil then
-            local ok, result = pcall(
-                BoxesAPI.AttackBox.Fire,
-                fieldId,
-                tonumber(box.Id),
-                workspace:GetServerTimeNow()
-            )
-
-            if not ok then
-                warn("[Boxes] Attack failed:", result)
-                lockedBox = nil
-                lockedArea = nil
-            end
+        if distance > attackRange then
+            moveToTarget(box, distance)
         else
-            warn("[Boxes] Could not resolve field ID")
-            lockedBox = nil
-            lockedArea = nil
+            local _, humanoid, rootPart = getCharacterState()
+
+            if humanoid and rootPart then
+                humanoid:MoveTo(rootPart.Position)
+            end
+
+            clearMovement()
+            attackBox(box, areaData, distance)
         end
     end
 
@@ -347,33 +493,48 @@ local function attackNearestBox()
         lastStatusAt = os.clock()
 
         print(
-            "[Boxes] Nearby",
-            nearbyCount,
+            "[Boxes] Available",
+            boxCount,
             "target",
             box and box.Id or "none",
             "distance",
-            box and string.format("%.1f", distance) or "-"
+            box and string.format("%.1f", distance) or "-",
+            distance > attackRange and "walking" or "attacking"
         )
     end
 end
 
-MainTab:Toggle("Auto Damage Nearby Boxes", false, function(state)
+MainTab:Toggle("Auto Farm Boxes", false, function(state)
     autoAttackBoxes = state
-    lockedBox = nil
-    lockedArea = nil
+    clearTarget()
 
     if state then
         task.spawn(function()
             while autoAttackBoxes do
-                attackNearestBox()
+                runAutoFarmStep()
                 task.wait(1 / attacksPerSecond)
             end
         end)
+    else
+        local _, humanoid, rootPart = getCharacterState()
+
+        if humanoid and rootPart then
+            humanoid:MoveTo(rootPart.Position)
+        end
+    end
+end)
+
+MainTab:Toggle("Auto Walk To Boxes", true, function(state)
+    autoWalkToBoxes = state
+
+    if not state then
+        clearMovement()
     end
 end)
 
 MainTab:Slider("Attack Range", 10, 28, 27, function(value)
     attackRange = math.clamp(value, 10, 28)
+    stopDistance = math.clamp(attackRange - 8, 5, 20)
 end)
 
 MainTab:Slider("Attacks Per Second", 1, 7, 5, function(value)
