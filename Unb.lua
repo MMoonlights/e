@@ -139,22 +139,21 @@ MainTab:Label("Boxes", "rbxassetid://7733752575")
 
 local autoAttackBoxes = false
 local autoWalkToBoxes = true
-local attackRange = 23
-local stopDistance = 15
+local attackRange = 10
+local stopDistance = 5
 local attacksPerSecond = 6
-local maxTravelDistance = 300
 local lastStatusAt = 0
 local lastMoveAt = 0
-local lastPathAt = 0
-local lastVisualCheckAt = 0
+local lastFieldId = nil
+local lastFieldTypeId = nil
 local lockedBox = nil
 local lockedArea = nil
 local lockedFieldId = nil
-local lockedVisual = nil
 local lockedPosition = nil
-local currentPath = nil
-local currentWaypoints = nil
-local currentWaypointIndex = 1
+local targetStartedAt = 0
+local lastProgressAt = 0
+local lastProgressDistance = math.huge
+local blockedBoxes = {}
 local areaFieldCache = setmetatable({}, {
     __mode = "k"
 })
@@ -196,7 +195,7 @@ local function fieldContainsPosition(field, position, padding)
 
     local delta = position - field.Position
     local halfX = field.Size.X * 0.5 + padding
-    local halfY = math.max(field.Size.Y * 0.5, 100) + padding
+    local halfY = math.max(field.Size.Y * 0.5, 150) + padding
     local halfZ = field.Size.Z * 0.5 + padding
 
     return math.abs(delta.X) <= halfX
@@ -205,8 +204,10 @@ local function fieldContainsPosition(field, position, padding)
 end
 
 local function getCurrentField(position)
-    local selectedField = nil
-    local selectedDistance = math.huge
+    local containedField = nil
+    local containedDistance = math.huge
+    local nearestField = nil
+    local nearestDistance = math.huge
 
     for _, field in pairs(fieldList) do
         if type(field) == "table"
@@ -214,15 +215,41 @@ local function getCurrentField(position)
             and typeof(field.Position) == "Vector3"
         then
             local delta = position - field.Position
-            local distance = Vector2.new(delta.X, delta.Z).Magnitude
+            local horizontalDistance = Vector2.new(
+                delta.X,
+                delta.Z
+            ).Magnitude
 
-            if fieldContainsPosition(field, position, 8)
-                and distance < selectedDistance
+            if horizontalDistance < nearestDistance then
+                nearestDistance = horizontalDistance
+                nearestField = field
+            end
+
+            if fieldContainsPosition(field, position, 80)
+                and horizontalDistance < containedDistance
             then
-                selectedDistance = distance
-                selectedField = field
+                containedDistance = horizontalDistance
+                containedField = field
             end
         end
+    end
+
+    local selectedField = containedField
+
+    if not selectedField
+        and lastFieldId
+        and fieldsById[lastFieldId]
+    then
+        selectedField = fieldsById[lastFieldId]
+    end
+
+    if not selectedField then
+        selectedField = nearestField
+    end
+
+    if selectedField then
+        lastFieldId = tonumber(selectedField.Id)
+        lastFieldTypeId = selectedField.FieldTypeId
     end
 
     return selectedField
@@ -296,7 +323,7 @@ local function resolveAreaFieldId(areaKey, areaData)
                     if fieldContainsPosition(
                         field,
                         box.CFrame.Position,
-                        15
+                        20
                     ) then
                         score += 1
                     end
@@ -305,7 +332,7 @@ local function resolveAreaFieldId(areaKey, areaData)
                         box.CFrame.Position - field.Position
                     ).Magnitude
 
-                    if sampled >= 30 then
+                    if sampled >= 40 then
                         break
                     end
                 end
@@ -336,6 +363,28 @@ local function resolveAreaFieldId(areaKey, areaData)
     return nil
 end
 
+local function getInstancePosition(instance)
+    if typeof(instance) ~= "Instance" then
+        return nil
+    end
+
+    if instance:IsA("BasePart") then
+        return instance.Position
+    end
+
+    if instance:IsA("Model") then
+        return instance:GetPivot().Position
+    end
+
+    local model = instance:FindFirstAncestorOfClass("Model")
+
+    if model then
+        return model:GetPivot().Position
+    end
+
+    return nil
+end
+
 local function getDirectVisual(box)
     local keys = {
         "Model",
@@ -354,28 +403,6 @@ local function getDirectVisual(box)
         then
             return value
         end
-    end
-
-    return nil
-end
-
-local function getInstancePosition(instance)
-    if typeof(instance) ~= "Instance" then
-        return nil
-    end
-
-    if instance:IsA("BasePart") then
-        return instance.Position
-    end
-
-    if instance:IsA("Model") then
-        return instance:GetPivot().Position
-    end
-
-    local model = instance:FindFirstAncestorOfClass("Model")
-
-    if model then
-        return model:GetPivot().Position
     end
 
     return nil
@@ -436,7 +463,7 @@ local function findVisualBox(box, character)
         if position
             and (
                 position - box.CFrame.Position
-            ).Magnitude <= 10
+            ).Magnitude <= 12
         then
             return directVisual, position
         end
@@ -448,7 +475,7 @@ local function findVisualBox(box, character)
 
     local parts = workspace:GetPartBoundsInRadius(
         box.CFrame.Position,
-        8,
+        10,
         overlapParams
     )
 
@@ -472,7 +499,7 @@ local function findVisualBox(box, character)
                         position - box.CFrame.Position
                     ).Magnitude
 
-                    if distance <= 10
+                    if distance <= 12
                         and distance < bestDistance
                     then
                         bestDistance = distance
@@ -485,6 +512,33 @@ local function findVisualBox(box, character)
     end
 
     return bestVisual, bestPosition
+end
+
+local function isBlocked(fieldId, boxId)
+    local key = tostring(fieldId)
+        .. ":"
+        .. tostring(boxId)
+
+    local expiresAt = blockedBoxes[key]
+
+    if not expiresAt then
+        return false
+    end
+
+    if os.clock() >= expiresAt then
+        blockedBoxes[key] = nil
+        return false
+    end
+
+    return true
+end
+
+local function blockBox(fieldId, boxId, duration)
+    local key = tostring(fieldId)
+        .. ":"
+        .. tostring(boxId)
+
+    blockedBoxes[key] = os.clock() + duration
 end
 
 local function getCandidateBoxes()
@@ -501,6 +555,8 @@ local function getCandidateBoxes()
     end
 
     local currentFieldId = tonumber(currentField.Id)
+    local currentType = currentField.FieldTypeId
+        or lastFieldTypeId
     local candidates = {}
 
     for areaKey, areaData in next, boxAreaState do
@@ -513,25 +569,52 @@ local function getCandidateBoxes()
                 areaData
             )
 
-            if areaFieldId == currentFieldId then
+            local typeMatches = currentType == nil
+                or areaData.FieldTypeId == currentType
+
+            if areaFieldId == currentFieldId
+                and typeMatches
+            then
                 for _, box in next, areaData.Boxes do
                     if isBoxValid(box)
-                        and fieldContainsPosition(
-                            currentField,
-                            box.CFrame.Position,
-                            10
+                        and not isBlocked(
+                            areaFieldId,
+                            box.Id
                         )
                     then
-                        local distance = (
-                            rootPart.Position - box.CFrame.Position
-                        ).Magnitude
+                        local dataPosition = box.CFrame.Position
 
-                        if distance <= maxTravelDistance then
+                        if fieldContainsPosition(
+                            currentField,
+                            dataPosition,
+                            40
+                        ) then
+                            local distance = (
+                                rootPart.Position - dataPosition
+                            ).Magnitude
+
+                            local visual, visualPosition = nil, nil
+
+                            if distance <= 80 then
+                                visual, visualPosition = findVisualBox(
+                                    box,
+                                    character
+                                )
+                            end
+
                             table.insert(candidates, {
                                 Box = box,
                                 Area = areaData,
                                 FieldId = areaFieldId,
-                                Distance = distance
+                                DataPosition = dataPosition,
+                                Visual = visual,
+                                VisualPosition = visualPosition,
+                                Distance = visualPosition
+                                    and (
+                                        rootPart.Position
+                                        - visualPosition
+                                    ).Magnitude
+                                    or distance
                             })
                         end
                     end
@@ -541,51 +624,38 @@ local function getCandidateBoxes()
     end
 
     table.sort(candidates, function(left, right)
-        return left.Distance < right.Distance
-    end)
+        local leftVisible = left.Visual ~= nil
+        local rightVisible = right.Visual ~= nil
 
-    for index = #candidates, 31, -1 do
-        candidates[index] = nil
-    end
-
-    local visibleCandidates = {}
-
-    for _, candidate in ipairs(candidates) do
-        local visual, visualPosition = findVisualBox(
-            candidate.Box,
-            character
-        )
-
-        if visual and visualPosition then
-            candidate.Visual = visual
-            candidate.Position = visualPosition
-            candidate.Distance = (
-                rootPart.Position - visualPosition
-            ).Magnitude
-            table.insert(visibleCandidates, candidate)
+        if leftVisible ~= rightVisible then
+            return leftVisible
         end
-    end
 
-    table.sort(visibleCandidates, function(left, right)
         return left.Distance < right.Distance
     end)
 
-    return visibleCandidates, currentField
-end
-
-local function clearMovement()
-    currentPath = nil
-    currentWaypoints = nil
-    currentWaypointIndex = 1
+    return candidates, currentField
 end
 
 local function clearTarget()
     lockedBox = nil
     lockedArea = nil
     lockedFieldId = nil
-    lockedVisual = nil
     lockedPosition = nil
-    clearMovement()
+    targetStartedAt = 0
+    lastProgressAt = 0
+    lastProgressDistance = math.huge
+end
+
+local function setTarget(candidate)
+    lockedBox = candidate.Box
+    lockedArea = candidate.Area
+    lockedFieldId = candidate.FieldId
+    lockedPosition = candidate.VisualPosition
+        or candidate.DataPosition
+    targetStartedAt = os.clock()
+    lastProgressAt = os.clock()
+    lastProgressDistance = candidate.Distance
 end
 
 local function getLockedBox()
@@ -593,38 +663,66 @@ local function getLockedBox()
 
     if not rootPart then
         clearTarget()
-        return nil, nil, nil, nil, math.huge, 0
+        return nil, nil, nil, math.huge, 0
     end
 
     if isBoxValid(lockedBox)
         and lockedFieldId ~= nil
         and fieldsById[lockedFieldId]
-        and fieldContainsPosition(
-            fieldsById[lockedFieldId],
-            rootPart.Position,
-            8
+        and not isBlocked(
+            lockedFieldId,
+            lockedBox.Id
         )
     then
-        if os.clock() - lastVisualCheckAt >= 0.5 then
-            lastVisualCheckAt = os.clock()
+        local dataPosition = lockedBox.CFrame.Position
+        local dataDistance = (
+            rootPart.Position - dataPosition
+        ).Magnitude
 
-            local visual, position = findVisualBox(
+        local visual, visualPosition = nil, nil
+
+        if dataDistance <= 80 then
+            visual, visualPosition = findVisualBox(
                 lockedBox,
                 character
             )
-
-            lockedVisual = visual
-            lockedPosition = position
         end
 
-        if lockedVisual
-            and lockedVisual:IsDescendantOf(workspace)
-            and lockedPosition
-        then
-            local distance = (
-                rootPart.Position - lockedPosition
-            ).Magnitude
+        if visualPosition then
+            lockedPosition = visualPosition
+        else
+            lockedPosition = dataPosition
+        end
 
+        local distance = (
+            rootPart.Position - lockedPosition
+        ).Magnitude
+
+        if distance + 1 < lastProgressDistance then
+            lastProgressDistance = distance
+            lastProgressAt = os.clock()
+        end
+
+        if distance <= 35
+            and not visualPosition
+            and os.clock() - targetStartedAt >= 2
+        then
+            blockBox(
+                lockedFieldId,
+                lockedBox.Id,
+                15
+            )
+            clearTarget()
+        elseif distance > attackRange
+            and os.clock() - lastProgressAt >= 5
+        then
+            blockBox(
+                lockedFieldId,
+                lockedBox.Id,
+                10
+            )
+            clearTarget()
+        else
             local candidates = getCandidateBoxes()
 
             return lockedBox,
@@ -634,20 +732,15 @@ local function getLockedBox()
                 distance,
                 #candidates
         end
+    else
+        clearTarget()
     end
-
-    clearTarget()
 
     local candidates = getCandidateBoxes()
     local candidate = candidates[1]
 
     if candidate then
-        lockedBox = candidate.Box
-        lockedArea = candidate.Area
-        lockedFieldId = candidate.FieldId
-        lockedVisual = candidate.Visual
-        lockedPosition = candidate.Position
-        lastVisualCheckAt = os.clock()
+        setTarget(candidate)
 
         return lockedBox,
             lockedArea,
@@ -668,46 +761,11 @@ local function getApproachPosition(rootPosition, targetPosition)
         horizontal = Vector3.new(1, 0, 0)
     end
 
-    return targetPosition
-        + horizontal.Unit * stopDistance
-        + Vector3.new(0, 2, 0)
-end
-
-local function computePath(destination)
-    local _, humanoid, rootPart = getCharacterState()
-
-    if not humanoid or not rootPart then
-        return false
-    end
-
-    local path = PathfindingService:CreatePath({
-        AgentRadius = 2,
-        AgentHeight = 5,
-        AgentCanJump = true,
-        AgentCanClimb = true,
-        WaypointSpacing = 5
-    })
-
-    local ok = pcall(function()
-        path:ComputeAsync(rootPart.Position, destination)
-    end)
-
-    if not ok or path.Status ~= Enum.PathStatus.Success then
-        return false
-    end
-
-    local waypoints = path:GetWaypoints()
-
-    if #waypoints == 0 then
-        return false
-    end
-
-    currentPath = path
-    currentWaypoints = waypoints
-    currentWaypointIndex = math.min(2, #waypoints)
-    lastPathAt = os.clock()
-
-    return true
+    return Vector3.new(
+        targetPosition.X,
+        rootPosition.Y,
+        targetPosition.Z
+    ) + horizontal.Unit * stopDistance
 end
 
 local function moveToTarget(targetPosition, distance)
@@ -723,7 +781,6 @@ local function moveToTarget(targetPosition, distance)
 
     if distance <= stopDistance then
         humanoid:MoveTo(rootPart.Position)
-        clearMovement()
         return
     end
 
@@ -732,38 +789,14 @@ local function moveToTarget(targetPosition, distance)
         targetPosition
     )
 
-    if not currentWaypoints
-        or currentWaypointIndex > #currentWaypoints
-        or os.clock() - lastPathAt >= 2
-    then
-        if not computePath(destination) then
-            if os.clock() - lastMoveAt >= 0.25 then
-                lastMoveAt = os.clock()
-                humanoid:MoveTo(destination)
-            end
-
-            return
-        end
-    end
-
-    local waypoint = currentWaypoints[currentWaypointIndex]
-
-    if not waypoint then
-        clearMovement()
-        return
-    end
-
-    if waypoint.Action == Enum.PathWaypointAction.Jump then
-        humanoid.Jump = true
-    end
-
     if os.clock() - lastMoveAt >= 0.2 then
         lastMoveAt = os.clock()
-        humanoid:MoveTo(waypoint.Position)
+        humanoid:MoveTo(destination)
     end
 
-    if (rootPart.Position - waypoint.Position).Magnitude <= 4 then
-        currentWaypointIndex += 1
+    if os.clock() - lastProgressAt >= 2.5 then
+        humanoid.Jump = true
+        humanoid:MoveTo(destination)
     end
 end
 
@@ -797,6 +830,7 @@ local function attackBox(box, fieldId, targetPosition)
 
     if not ok then
         warn("[Boxes] Attack failed:", result)
+        blockBox(fieldId, box.Id, 5)
         clearTarget()
         return false
     end
@@ -821,24 +855,14 @@ local function runAutoFarmStep()
         candidateCount = getLockedBox()
 
     if box and targetPosition and fieldId then
-        if distance > attackRange then
-            moveToTarget(targetPosition, distance)
-        else
-            local _, humanoid, rootPart = getCharacterState()
+        moveToTarget(targetPosition, distance)
 
-            if humanoid and rootPart then
-                humanoid:MoveTo(rootPart.Position)
-            end
-
-            clearMovement()
-
-            if not attackBox(
+        if distance <= attackRange then
+            attackBox(
                 box,
                 fieldId,
                 targetPosition
-            ) then
-                clearTarget()
-            end
+            )
         end
     end
 
@@ -847,8 +871,8 @@ local function runAutoFarmStep()
 
         print(
             "[Boxes] Field",
-            fieldId or "none",
-            "visible",
+            fieldId or lastFieldId or "none",
+            "available",
             candidateCount,
             "target",
             box and box.Id or "none",
@@ -885,18 +909,14 @@ end)
 
 MainTab:Toggle("Auto Walk To Boxes", true, function(state)
     autoWalkToBoxes = state
-
-    if not state then
-        clearMovement()
-    end
 end)
 
-MainTab:Slider("Attack Range", 12, 24, 23, function(value)
-    attackRange = math.clamp(value, 12, 24)
+MainTab:Slider("Attack Range", 6, 20, 10, function(value)
+    attackRange = math.clamp(value, 6, 20)
     stopDistance = math.clamp(
-        attackRange - 8,
-        5,
-        16
+        attackRange - 5,
+        3,
+        8
     )
 end)
 
