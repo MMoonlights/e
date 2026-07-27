@@ -42,30 +42,52 @@ local RE = nil
 local RF = nil
 local BoxController = nil
 local BoxesZAP = nil
+local ZAPFolder = nil
 
 task.spawn(function()
-    -- Безопасный поиск ZAP
     while not ReplicatedStorage:FindFirstChild("ZAP") do task.wait(0.5) end
-    local zapFolder = ReplicatedStorage:FindFirstChild("ZAP")
+    ZAPFolder = ReplicatedStorage:FindFirstChild("ZAP")
     
-    while not zapFolder:FindFirstChild("Boxes_RELIABLE") do task.wait(0.5) end
-    BoxesZAP = zapFolder:FindFirstChild("Boxes_RELIABLE")
+    while not ZAPFolder:FindFirstChild("Boxes_RELIABLE") do task.wait(0.5) end
+    BoxesZAP = ZAPFolder:FindFirstChild("Boxes_RELIABLE")
     
-    -- Безопасный поиск Controllers
     while not ReplicatedStorage:FindFirstChild("Controllers") do task.wait(0.5) end
     local controllers = ReplicatedStorage:FindFirstChild("Controllers")
     
     while not controllers:FindFirstChild("BoxController") do task.wait(0.5) end
     BoxController = require(controllers:FindFirstChild("BoxController"))
     
-    -- Фоновый поиск RE и RF (не блокируют скрипт)
     while not ReplicatedStorage:FindFirstChild("RE") do task.wait(0.5) end
     RE = ReplicatedStorage:FindFirstChild("RE")
     
     while not ReplicatedStorage:FindFirstChild("RF") do task.wait(0.5) end
     RF = ReplicatedStorage:FindFirstChild("RF")
     
-    print("[Success] ZAP, BoxController, RE и RF успешно загружены в фоновом режиме!")
+    print("[Success] ZAP, BoxController, RE и RF успешно загружены!")
+end)
+
+-- ==========================================
+-- ZAP ЛОГГЕР (Для дебага)
+-- ==========================================
+task.spawn(function()
+    while not ZAPFolder do task.wait(0.5) end
+    
+    local oldNamecallZAP
+    oldNamecallZAP = hookmetamethod(game, "__namecall", function(self, ...)
+        if typeof(self) == "Instance" and self:IsDescendantOf(ZAPFolder) and getnamecallmethod() == "FireServer" then
+            local args = {...}
+            if type(args[1]) == "buffer" then
+                local len = buffer.len(args[1])
+                local str = ""
+                for i = 0, len - 1 do
+                    str = str .. string.format("\\x%02X", buffer.readu8(args[1], i))
+                end
+                print(`[ZAP Logger] {self.Name}:FireServer Buffer:`, str)
+            end
+        end
+        return oldNamecallZAP(self, ...)
+    end)
+    print("[ZAP Logger] Активирован! Ударьте по боксу вручную, чтобы увидеть пакет.")
 end)
 
 -- ==========================================
@@ -103,11 +125,13 @@ end)
 
 MainTab:Label("Boxes", "rbxassetid://7733752575")
 
--- ИСПРАВЛЕННАЯ Логика авто-атаки боксов через ZAP буфер (Event 4)
+-- Логика авто-атаки боксов
 local autoAttackBoxes = false
 local attackRange = 50
 local attackSpeed = 0.1
 local attackedBoxes = {}
+local boxDebugLogged = false
+local missingIdLogged = false
 
 local function attackBox(fieldId, boxId)
     if not BoxesZAP then return end
@@ -117,26 +141,25 @@ local function attackBox(fieldId, boxId)
     boxId = tonumber(boxId)
     if not fieldId or not boxId then return end
     
-    -- Создаем буфер на 17 байт (как в дампах)
     local buf = buffer.create(17)
     
-    -- Заголовок: \x00\x04 (Event 4 = Update/Damage)
+    -- Заголовок: \x00\x04
     buffer.writeu8(buf, 0, 0x00)
     buffer.writeu8(buf, 1, 0x04)
     
-    -- Записываем Field ID (4 байта, Big Endian)
+    -- Field ID (4 байта, Big Endian)
     buffer.writeu8(buf, 2, math.floor(fieldId / 16777216) % 256)
     buffer.writeu8(buf, 3, math.floor(fieldId / 65536) % 256)
     buffer.writeu8(buf, 4, math.floor(fieldId / 256) % 256)
     buffer.writeu8(buf, 5, fieldId % 256)
     
-    -- Записываем Box ID (4 байта, Big Endian)
+    -- Box ID (4 байта, Big Endian)
     buffer.writeu8(buf, 6, math.floor(boxId / 16777216) % 256)
     buffer.writeu8(buf, 7, math.floor(boxId / 65536) % 256)
     buffer.writeu8(buf, 8, math.floor(boxId / 256) % 256)
     buffer.writeu8(buf, 9, boxId % 256)
     
-    -- Статичный хвост (7 байт из вашего дампа)
+    -- Статичный хвост (7 байт)
     buffer.writeu8(buf, 10, 0xA4)
     buffer.writeu8(buf, 11, 0x1D)
     buffer.writeu8(buf, 12, 0xC1)
@@ -145,12 +168,9 @@ local function attackBox(fieldId, boxId)
     buffer.writeu8(buf, 15, 0xDA)
     buffer.writeu8(buf, 16, 0x41)
     
-    -- Отправляем на сервер
     pcall(function()
         BoxesZAP:FireServer(buf, {})
     end)
-    
-    attackedBoxes[tostring(boxId)] = os.clock()
 end
 
 local function attackNearbyBoxes()
@@ -159,24 +179,54 @@ local function attackNearbyBoxes()
     
     local pos = LocalPlayer.Character.PrimaryPart.Position
     
-    -- Очистка старых записей
-    for id, timeAtk in pairs(attackedBoxes) do
-        if os.clock() - timeAtk > 3 then
-            attackedBoxes[id] = nil
-        end
-    end
-    
     local success, boxes = pcall(function()
         return BoxController.GetBoxesInRadius(pos, attackRange)
     end)
     
-    if not success or not boxes then return end
+    if not success then
+        if not missingIdLogged then
+            warn("[Debug] Ошибка BoxController.GetBoxesInRadius:", boxes)
+            missingIdLogged = true
+        end
+        return
+    end
+    
+    if not boxes or #boxes == 0 then
+        return
+    end
     
     for _, box in ipairs(boxes) do
-        if box and box.Id and box.Field and box.Field.Id and not attackedBoxes[tostring(box.Id)] then
+        -- Логируем структуру бокса один раз, чтобы понять, какие там есть переменные
+        if not boxDebugLogged then
+            local keys = ""
+            for k, v in pairs(box) do keys = keys .. tostring(k) .. " (" .. typeof(v) .. "), " end
+            print("[Debug] Структура Box:", keys)
+            if box.Field then
+                local fkeys = ""
+                for k, v in pairs(box.Field) do fkeys = fkeys .. tostring(k) .. " (" .. typeof(v) .. "), " end
+                print("[Debug] Структура Box.Field:", fkeys)
+            end
+            boxDebugLogged = true
+        end
+        
+        -- Пытаемся найти ID разными путями
+        local fieldId = nil
+        if box.Field and box.Field.Id then fieldId = box.Field.Id
+        elseif box.FieldId then fieldId = box.FieldId
+        elseif box.Field and box.Field.FieldId then fieldId = box.Field.FieldId
+        end
+        
+        local boxId = box.Id
+        
+        if fieldId and boxId then
             if (pos - box.CFrame.Position).Magnitude <= attackRange then
-                attackBox(box.Field.Id, box.Id)
+                attackBox(fieldId, boxId)
                 task.wait(0.05)
+            end
+        else
+            if not missingIdLogged then
+                warn("[Debug] Не удалось найти Field ID или Box ID у объекта. Проверьте консоль (F9).")
+                missingIdLogged = true
             end
         end
     end
@@ -184,7 +234,10 @@ end
 
 MainTab:Toggle("Auto Damage All Boxes", false, function(state)
     autoAttackBoxes = state
+    boxDebugLogged = false -- Сбрасываем лог при включении
+    missingIdLogged = false
     if state then
+        print("[Debug] Auto Attack Boxes ВКЛЮЧЕН. Ищем боксы...")
         task.spawn(function()
             while autoAttackBoxes do
                 attackNearbyBoxes()
@@ -200,13 +253,6 @@ end)
 
 MainTab:Slider("Attack Speed", 0.05, 2, 0.1, function(value)
     attackSpeed = value
-end)
-
-task.spawn(function()
-    while true do
-        attackedBoxes = {}
-        task.wait(5)
-    end
 end)
 
 MainTab:Label("Weapons", "rbxassetid://7733955511")
