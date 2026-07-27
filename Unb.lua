@@ -103,54 +103,29 @@ end)
 
 MainTab:Label("Boxes", "rbxassetid://7733752575")
 
--- Логика авто-атаки боксов через ZAP буфер
+-- НОВАЯ Логика авто-атаки боксов через динамический ZAP буфер
 local autoAttackBoxes = false
 local attackRange = 50
 local attackSpeed = 0.1
-local attackedBoxes = {}
 
-local function attackBox(fieldId, boxId)
+local function attackBox(fieldId)
     if not BoxesZAP then return end
-    if not fieldId or not boxId then return end
+    if not fieldId then return end
     
     fieldId = tonumber(fieldId)
-    boxId = tonumber(boxId)
-    if not fieldId or not boxId then return end
+    if not fieldId then return end
     
-    -- Создаем буфер на 17 байт
-    local buf = buffer.create(17)
+    -- Формируем динамический пакет: \x00\x03 + Field ID + \x00\x00\x00 + os.time()
+    local bufStr = string.pack(">I2", 0x0003) -- Заголовок
+    bufStr = bufStr .. string.pack(">I4", fieldId) -- Field ID (4 байта)
+    bufStr = bufStr .. "\x00\x00\x00" -- Box ID (3 байта, 0)
+    bufStr = bufStr .. string.pack("<d", os.time()) -- Динамический таймстамп (8 байт)
     
-    -- Заголовок: \x00\x04
-    buffer.writeu8(buf, 0, 0x00)
-    buffer.writeu8(buf, 1, 0x04)
+    local buf = buffer.fromstring(bufStr)
     
-    -- Записываем Field ID (Big Endian Int32)
-    buffer.writeu8(buf, 2, math.floor(fieldId / 16777216) % 256)
-    buffer.writeu8(buf, 3, math.floor(fieldId / 65536) % 256)
-    buffer.writeu8(buf, 4, math.floor(fieldId / 256) % 256)
-    buffer.writeu8(buf, 5, fieldId % 256)
-    
-    -- Записываем Box ID (Big Endian Int32)
-    buffer.writeu8(buf, 6, math.floor(boxId / 16777216) % 256)
-    buffer.writeu8(buf, 7, math.floor(boxId / 65536) % 256)
-    buffer.writeu8(buf, 8, math.floor(boxId / 256) % 256)
-    buffer.writeu8(buf, 9, boxId % 256)
-    
-    -- Копируем статичный хвост (7 байт)
-    buffer.writeu8(buf, 10, 0xA4)
-    buffer.writeu8(buf, 11, 0x1D)
-    buffer.writeu8(buf, 12, 0xC1)
-    buffer.writeu8(buf, 13, 0xCD)
-    buffer.writeu8(buf, 14, 0x99)
-    buffer.writeu8(buf, 15, 0xDA)
-    buffer.writeu8(buf, 16, 0x41)
-    
-    -- Отправляем на сервер
     pcall(function()
         BoxesZAP:FireServer(buf, {})
     end)
-    
-    attackedBoxes[tostring(boxId)] = os.clock()
 end
 
 local function attackNearbyBoxes()
@@ -159,12 +134,6 @@ local function attackNearbyBoxes()
     
     local pos = LocalPlayer.Character.PrimaryPart.Position
     
-    for id, timeAtk in pairs(attackedBoxes) do
-        if os.clock() - timeAtk > 3 then
-            attackedBoxes[id] = nil
-        end
-    end
-    
     local success, boxes = pcall(function()
         return BoxController.GetBoxesInRadius(pos, attackRange)
     end)
@@ -172,9 +141,9 @@ local function attackNearbyBoxes()
     if not success or not boxes then return end
     
     for _, box in ipairs(boxes) do
-        if box and box.Id and box.Field and box.Field.Id and not attackedBoxes[tostring(box.Id)] then
+        if box and box.Field and box.Field.Id then
             if (pos - box.CFrame.Position).Magnitude <= attackRange then
-                attackBox(box.Field.Id, box.Id)
+                attackBox(box.Field.Id)
                 task.wait(0.05)
             end
         end
@@ -199,13 +168,6 @@ end)
 
 MainTab:Slider("Attack Speed", 0.05, 2, 0.1, function(value)
     attackSpeed = value
-end)
-
-task.spawn(function()
-    while true do
-        attackedBoxes = {}
-        task.wait(5)
-    end
 end)
 
 MainTab:Label("Weapons", "rbxassetid://7733955511")
