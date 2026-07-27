@@ -37,6 +37,20 @@ local RewardTab = Window:Tab({"Reward", "rbxassetid://7733946818"})
 local LocalPlayerTab = Window:Tab({"LocalPlayer", "rbxassetid://7743875962"})
 
 -- ==========================================
+-- БЕЗОПАСНАЯ ЗАГРУЗКА REMOTE EVENTS (Fix для Infinite Yield)
+-- ==========================================
+local RE = ReplicatedStorage:WaitForChild("RE", 15)
+local RF = ReplicatedStorage:WaitForChild("RF", 15)
+
+if not RE or not RF then
+    warn("[Error] Папки RE или RF не найдены в ReplicatedStorage! Скрипт может работать некорректно.")
+    return
+end
+
+local BoxController = require(ReplicatedStorage:WaitForChild("Controllers", 15):WaitForChild("BoxController", 15))
+local AttackBoxRemote = RE:WaitForChild("AttackBox", 15)
+
+-- ==========================================
 -- MAIN TAB
 -- ==========================================
 MainTab:Label("MAIN STATS", "rbxassetid://7733960981")
@@ -72,9 +86,6 @@ end)
 MainTab:Label("Boxes", "rbxassetid://7733752575")
 
 -- Логика атаки боксов
-local BoxController = require(ReplicatedStorage.Controllers.BoxController)
-local AttackBoxRemote = ReplicatedStorage:WaitForChild("RE"):WaitForChild("AttackBox")
-
 local autoAttackBoxes = false
 local attackRange = 50
 local attackSpeed = 0.1
@@ -163,7 +174,7 @@ local function buyAllWeapons()
             if items then
                 for _, item in pairs(items:GetChildren()) do
                     pcall(function()
-                        ReplicatedStorage.RF.PurchaseItem:InvokeServer(item)
+                        RF.PurchaseItem:InvokeServer(item)
                     end)
                     task.wait(0.5)
                 end
@@ -216,7 +227,7 @@ local enchantDelay = 5
 
 local function enchantHat()
     pcall(function()
-        ReplicatedStorage.RE.EnchantStationUpgrade:FireServer("Hat")
+        RE.EnchantStationUpgrade:FireServer("Hat")
     end)
 end
 
@@ -288,7 +299,7 @@ end)
 
 local function claimAchievement(achName)
     pcall(function()
-        ReplicatedStorage.RE.ClaimAchievement:FireServer(achName)
+        RE.ClaimAchievement:FireServer(achName)
     end)
 end
 
@@ -343,15 +354,15 @@ RewardTab:Toggle("Auto Claim Login Rewards", false, function(state)
 end)
 
 local function claimQuest(questName)
-    pcall(function() ReplicatedStorage.RE.CollectQuest:FireServer(questName) end)
+    pcall(function() RE.CollectQuest:FireServer(questName) end)
 end
 
 local function claimPlaytime(id)
-    pcall(function() ReplicatedStorage.RE.ClaimPlaytimeReward:FireServer(id) end)
+    pcall(function() RE.ClaimPlaytimeReward:FireServer(id) end)
 end
 
 local function claimLogin()
-    pcall(function() ReplicatedStorage.RE.ClaimLoginReward:FireServer() end)
+    pcall(function() RE.ClaimLoginReward:FireServer() end)
 end
 
 task.spawn(function()
@@ -560,7 +571,6 @@ SellNowBtn.TextSize = 12
 SellNowBtn.Parent = SellFrame
 
 local function sellItems()
-    local RF = ReplicatedStorage:FindFirstChild("RF")
     if not RF then return end
     local SellRemote = RF:FindFirstChild("SellItems")
     if not SellRemote then return end
