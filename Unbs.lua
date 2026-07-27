@@ -34,26 +34,134 @@ local AchievementsTab = Window:Tab({"Achievements", "rbxassetid://7733673987"})
 local RewardTab = Window:Tab({"Reward", "rbxassetid://7733946818"})
 local LocalPlayerTab = Window:Tab({"LocalPlayer", "rbxassetid://7743875962"})
 
-local RE = nil
-local RF = nil
-local BoxesAPI = nil
+local RE = ReplicatedStorage:FindFirstChild("RE")
+local RF = ReplicatedStorage:FindFirstChild("RF")
+local BoxController = nil
+local boxAreaState = nil
+local SetTarget = nil
+local Attack = nil
+local RemoveTarget = nil
 
-task.spawn(function()
-    local modules = ReplicatedStorage:WaitForChild("Modules")
-    local remotes = modules:WaitForChild("Remotes")
-    local boxesModule = remotes:WaitForChild("Boxes")
+local function readUpvalue(target, index)
+    local reader = debug and debug.getupvalue or getupvalue
 
-    local boxesOk, boxesResult = pcall(require, boxesModule)
-
-    if boxesOk and type(boxesResult) == "table" then
-        BoxesAPI = boxesResult
-        print("[Success] Boxes API loaded")
-    else
-        warn("[Loader] Failed to load Boxes module:", boxesResult)
+    if type(reader) ~= "function" then
+        return nil
     end
 
-    RE = ReplicatedStorage:FindFirstChild("RE")
-    RF = ReplicatedStorage:FindFirstChild("RF")
+    local ok, first, second = pcall(reader, target, index)
+
+    if not ok then
+        return nil
+    end
+
+    if second ~= nil then
+        return second
+    end
+
+    return first
+end
+
+local function getFunctionInfo(target)
+    local name = nil
+    local source = nil
+
+    if debug and type(debug.getinfo) == "function" then
+        local ok, info = pcall(debug.getinfo, target)
+
+        if ok and type(info) == "table" then
+            name = info.name
+            source = info.source
+        end
+    end
+
+    if debug and type(debug.info) == "function" then
+        if not name then
+            local ok, value = pcall(debug.info, target, "n")
+
+            if ok then
+                name = value
+            end
+        end
+
+        if not source then
+            local ok, value = pcall(debug.info, target, "s")
+
+            if ok then
+                source = value
+            end
+        end
+    end
+
+    return tostring(name or ""), tostring(source or "")
+end
+
+local function resolveAttackFunctions()
+    if type(getgc) ~= "function" then
+        return false
+    end
+
+    for _, candidate in next, getgc(false) do
+        if type(candidate) == "function"
+            and (type(islclosure) ~= "function" or islclosure(candidate))
+        then
+            local name, source = getFunctionInfo(candidate)
+            local relevantSource = source == ""
+                or string.find(source, "BoxController", 1, true)
+                or string.find(source, "Controllers", 1, true)
+
+            if relevantSource then
+                if name == "SetTarget" and not SetTarget then
+                    SetTarget = candidate
+                elseif name == "Attack" and not Attack then
+                    Attack = candidate
+                elseif name == "RemoveTarget" and not RemoveTarget then
+                    RemoveTarget = candidate
+                end
+            end
+        end
+    end
+
+    return SetTarget ~= nil and Attack ~= nil
+end
+
+task.spawn(function()
+    local controllers = ReplicatedStorage:WaitForChild("Controllers")
+    local moduleScript = controllers:WaitForChild("BoxController")
+    local ok, result = pcall(require, moduleScript)
+
+    if ok and type(result) == "table" then
+        BoxController = result
+
+        if type(BoxController.GetClosestBox) == "function" then
+            boxAreaState = readUpvalue(
+                BoxController.GetClosestBox,
+                1
+            )
+        end
+    else
+        warn("[Loader] Failed to load BoxController:", result)
+    end
+
+    for _ = 1, 30 do
+        if resolveAttackFunctions() then
+            break
+        end
+
+        task.wait(0.5)
+    end
+
+    if BoxController and type(boxAreaState) == "table" then
+        print("[Success] BoxController state loaded")
+    else
+        warn("[Loader] BoxController state unavailable")
+    end
+
+    if SetTarget and Attack then
+        print("[Success] Attack functions resolved")
+    else
+        warn("[Loader] Attack functions unavailable")
+    end
 end)
 
 MainTab:Label("MAIN STATS", "rbxassetid://7733960981")
@@ -65,156 +173,10 @@ local StatsParagraph = MainTab:Paragraph("Loading statistics...")
 MainTab:Label("Boxes", "rbxassetid://7733752575")
 
 local autoAttackBoxes = false
-local attackDelay = 0.1
 local attackRange = 27
-local attackBatchSize = 30
-local currentFieldId = nil
-local fieldList = {}
-local fieldsById = {}
-local fieldGenerations = {}
-local activeBoxes = {}
-local listenersReady = false
-local lastSubscribeAt = 0
+local attacksPerSecond = 5
 local lastStatusAt = 0
-
-local function readSigned8(value)
-    if value >= 128 then
-        return value - 256
-    end
-
-    return value
-end
-
-local function readSigned16(value)
-    if value >= 32768 then
-        return value - 65536
-    end
-
-    return value
-end
-
-local function getFieldBoxes(fieldId)
-    fieldId = tonumber(fieldId)
-
-    if fieldId == nil then
-        return nil
-    end
-
-    local boxes = activeBoxes[fieldId]
-
-    if not boxes then
-        boxes = {}
-        activeBoxes[fieldId] = boxes
-    end
-
-    return boxes
-end
-
-local function removeBox(fieldId, boxId)
-    fieldId = tonumber(fieldId)
-    boxId = tonumber(boxId)
-
-    local boxes = fieldId and activeBoxes[fieldId]
-
-    if boxes and boxId then
-        boxes[boxId] = nil
-    end
-end
-
-local function decodeStaticBox(fieldId, value, offset)
-    fieldId = tonumber(fieldId)
-    offset = offset or 0
-
-    if fieldId == nil
-        or typeof(value) ~= "buffer"
-        or buffer.len(value) < offset + 19
-    then
-        return
-    end
-
-    local boxId = buffer.readu32(value, offset)
-    local localX = readSigned16(buffer.readu16(value, offset + 9))
-    local localY = readSigned8(buffer.readu8(value, offset + 11))
-    local localZ = readSigned16(buffer.readu16(value, offset + 12))
-    local field = fieldsById[fieldId]
-    local worldPosition = nil
-
-    if field and typeof(field.Position) == "Vector3" then
-        worldPosition = field.Position + Vector3.new(
-            localX,
-            localY,
-            localZ
-        )
-    end
-
-    getFieldBoxes(fieldId)[boxId] = {
-        Id = boxId,
-        LocalPosition = Vector3.new(localX, localY, localZ),
-        Position = worldPosition
-    }
-end
-
-local function decodeStaticBuffer(fieldId, value)
-    if typeof(value) ~= "buffer" then
-        return
-    end
-
-    local length = buffer.len(value)
-
-    if length == 19 then
-        decodeStaticBox(fieldId, value, 0)
-        return
-    end
-
-    if length > 19 and length % 19 == 0 then
-        for offset = 0, length - 19, 19 do
-            decodeStaticBox(fieldId, value, offset)
-        end
-    end
-end
-
-local function collectBoxState(fieldId, value, seen)
-    local valueType = typeof(value)
-
-    if valueType == "buffer" then
-        decodeStaticBuffer(fieldId, value)
-        return
-    end
-
-    if valueType ~= "table" or seen[value] then
-        return
-    end
-
-    seen[value] = true
-
-    local boxId = tonumber(value.boxId or value.BoxId)
-    local kind = value.kind or value.Kind
-
-    if boxId ~= nil and kind == "Remove" then
-        removeBox(fieldId, boxId)
-    elseif boxId ~= nil and typeof(value.static) == "buffer" then
-        decodeStaticBuffer(fieldId, value.static)
-    end
-
-    for _, item in pairs(value) do
-        collectBoxState(fieldId, item, seen)
-    end
-
-    seen[value] = nil
-end
-
-local function countBoxes(fieldId)
-    local boxes = activeBoxes[tonumber(fieldId)]
-    local count = 0
-
-    if boxes then
-        for _ in pairs(boxes) do
-            count += 1
-        end
-    end
-
-    return count
-end
+local selectedTarget = nil
 
 local function getRootPart()
     local character = LocalPlayer.Character
@@ -225,334 +187,168 @@ local function getRootPart()
     )
 end
 
-local function findCurrentField()
-    local rootPart = getRootPart()
+local function isBoxValid(box)
+    return type(box) == "table"
+        and tonumber(box.Id) ~= nil
+        and typeof(box.CFrame) == "CFrame"
+        and tonumber(box.Health) ~= nil
+        and box.Health > 0
+        and not box.IsDestroyed
+        and not box.IsOpen
+end
 
-    if not rootPart then
+local function getCurrentTarget()
+    if type(Attack) ~= "function" then
         return nil
     end
 
-    local position = rootPart.Position
-    local containedId = nil
-    local containedDistance = math.huge
-    local nearestId = nil
+    return readUpvalue(Attack, 1)
+end
+
+local function getNearestBox()
+    local rootPart = getRootPart()
+
+    if not rootPart or type(boxAreaState) ~= "table" then
+        return nil, math.huge, 0
+    end
+
+    local nearestBox = nil
     local nearestDistance = math.huge
+    local nearbyCount = 0
 
-    for _, field in pairs(fieldList) do
-        if type(field) == "table"
-            and tonumber(field.Id) ~= nil
-            and typeof(field.Position) == "Vector3"
+    for _, areaData in next, boxAreaState do
+        if type(areaData) == "table"
+            and type(areaData.Boxes) == "table"
         then
-            local fieldId = tonumber(field.Id)
-            local delta = position - field.Position
-            local distance = Vector2.new(delta.X, delta.Z).Magnitude
+            for _, box in next, areaData.Boxes do
+                if isBoxValid(box) then
+                    local distance = (
+                        rootPart.Position - box.CFrame.Position
+                    ).Magnitude
 
-            if distance < nearestDistance then
-                nearestDistance = distance
-                nearestId = fieldId
-            end
+                    if distance <= attackRange then
+                        nearbyCount += 1
 
-            if typeof(field.Size) == "Vector3" then
-                local halfX = field.Size.X * 0.5 + 5
-                local halfZ = field.Size.Z * 0.5 + 5
-
-                if math.abs(delta.X) <= halfX
-                    and math.abs(delta.Z) <= halfZ
-                    and distance < containedDistance
-                then
-                    containedDistance = distance
-                    containedId = fieldId
+                        if distance < nearestDistance then
+                            nearestDistance = distance
+                            nearestBox = box
+                        end
+                    end
                 end
             end
         end
     end
 
-    return containedId or nearestId
+    return nearestBox, nearestDistance, nearbyCount
 end
 
-local function subscribeField(fieldId)
-    if not BoxesAPI
-        or type(BoxesAPI.FieldSubscribe) ~= "table"
-        or type(BoxesAPI.FieldSubscribe.Fire) ~= "function"
-    then
-        return false
-    end
+local function clearTarget()
+    selectedTarget = nil
 
-    fieldId = tonumber(fieldId)
-
-    if fieldId == nil then
-        return false
-    end
-
-    local generation = fieldGenerations[fieldId] or 0
-    local ok, result = pcall(function()
-        BoxesAPI.FieldSubscribe.Fire({
-            {
-                fieldId = fieldId,
-                generation = generation
-            }
-        })
-    end)
-
-    lastSubscribeAt = os.clock()
-
-    if ok then
-        currentFieldId = fieldId
-        print(
-            "[Boxes] Subscribed to field",
-            fieldId,
-            "generation",
-            generation
-        )
-        return true
-    end
-
-    warn("[Boxes] Field subscription failed:", result)
-    return false
-end
-
-local function loadFieldList()
-    if not BoxesAPI
-        or type(BoxesAPI.GetFieldList) ~= "table"
-        or type(BoxesAPI.GetFieldList.Call) ~= "function"
-    then
-        return
-    end
-
-    local ok, result = pcall(BoxesAPI.GetFieldList.Call)
-
-    if not ok then
-        warn("[Boxes] GetFieldList failed:", result)
-        return
-    end
-
-    if type(result) ~= "table" then
-        return
-    end
-
-    fieldList = result
-    fieldsById = {}
-
-    for _, field in pairs(fieldList) do
-        if type(field) == "table" and tonumber(field.Id) ~= nil then
-            fieldsById[tonumber(field.Id)] = field
-        end
-    end
-
-    local fieldId = findCurrentField()
-
-    if fieldId ~= nil then
-        currentFieldId = fieldId
-        subscribeField(fieldId)
+    if type(RemoveTarget) == "function" then
+        pcall(RemoveTarget)
     end
 end
 
-local function initializeBoxListeners()
-    if listenersReady or not BoxesAPI then
-        return
-    end
-
-    listenersReady = true
-
-    if type(BoxesAPI.FieldSync) == "table"
-        and type(BoxesAPI.FieldSync.On) == "function"
-    then
-        BoxesAPI.FieldSync.On(function(fieldId, generation)
-            fieldId = tonumber(fieldId)
-
-            if fieldId == nil then
-                return
-            end
-
-            currentFieldId = fieldId
-
-            if tonumber(generation) ~= nil then
-                fieldGenerations[fieldId] = tonumber(generation)
-            end
-        end)
-    end
-
-    if type(BoxesAPI.FieldBaseline) == "table"
-        and type(BoxesAPI.FieldBaseline.On) == "function"
-    then
-        BoxesAPI.FieldBaseline.On(function(fieldId, generation, ...)
-            fieldId = tonumber(fieldId)
-
-            if fieldId == nil then
-                return
-            end
-
-            currentFieldId = fieldId
-            activeBoxes[fieldId] = {}
-
-            if tonumber(generation) ~= nil then
-                fieldGenerations[fieldId] = tonumber(generation)
-            end
-
-            collectBoxState(fieldId, generation, {})
-
-            local arguments = table.pack(...)
-
-            for index = 1, arguments.n do
-                collectBoxState(fieldId, arguments[index], {})
-            end
-
-            print(
-                "[Boxes] Baseline loaded",
-                fieldId,
-                countBoxes(fieldId)
-            )
-        end)
-    end
-
-    if type(BoxesAPI.FieldDelta) == "table"
-        and type(BoxesAPI.FieldDelta.On) == "function"
-    then
-        BoxesAPI.FieldDelta.On(function(fieldId, generation, changes)
-            fieldId = tonumber(fieldId)
-
-            if fieldId == nil then
-                return
-            end
-
-            currentFieldId = fieldId
-
-            if tonumber(generation) ~= nil then
-                fieldGenerations[fieldId] = tonumber(generation)
-            end
-
-            collectBoxState(fieldId, changes, {})
-        end)
-    end
-
-    task.spawn(loadFieldList)
-end
-
-local function attackNearbyBoxes()
-    if not autoAttackBoxes
-        or not BoxesAPI
-        or type(BoxesAPI.AttackBox) ~= "table"
-        or type(BoxesAPI.AttackBox.Fire) ~= "function"
-    then
-        return
-    end
-
+local function updateTarget()
     local rootPart = getRootPart()
 
     if not rootPart then
-        return
+        clearTarget()
+        return nil, math.huge, 0
     end
 
-    local fieldId = findCurrentField()
+    local currentTarget = getCurrentTarget()
 
-    if fieldId ~= nil and fieldId ~= currentFieldId then
-        currentFieldId = fieldId
-        subscribeField(fieldId)
-    end
+    if isBoxValid(currentTarget) then
+        local distance = (
+            rootPart.Position - currentTarget.CFrame.Position
+        ).Magnitude
 
-    fieldId = currentFieldId
-
-    if fieldId == nil then
-        return
-    end
-
-    local boxes = getFieldBoxes(fieldId)
-    local nearby = {}
-
-    for boxId, box in pairs(boxes) do
-        if type(box) == "table"
-            and typeof(box.Position) == "Vector3"
-        then
-            local distance = (
-                rootPart.Position - box.Position
-            ).Magnitude
-
-            if distance <= attackRange then
-                table.insert(nearby, {
-                    Id = boxId,
-                    Distance = distance
-                })
-            end
+        if distance <= attackRange then
+            selectedTarget = currentTarget
+            local _, _, nearbyCount = getNearestBox()
+            return currentTarget, distance, nearbyCount
         end
     end
 
-    table.sort(nearby, function(left, right)
-        return left.Distance < right.Distance
-    end)
-
-    local attacked = math.min(#nearby, attackBatchSize)
-
-    for index = 1, attacked do
-        pcall(
-            BoxesAPI.AttackBox.Fire,
-            fieldId,
-            nearby[index].Id,
-            workspace:GetServerTimeNow()
-        )
-
-        task.wait(0.01)
+    if currentTarget ~= nil then
+        clearTarget()
     end
 
-    if #nearby == 0
-        and os.clock() - lastSubscribeAt >= 3
+    local nearestBox, distance, nearbyCount = getNearestBox()
+
+    if nearestBox and type(SetTarget) == "function" then
+        local ok = pcall(SetTarget, nearestBox)
+
+        if ok then
+            selectedTarget = nearestBox
+        end
+    end
+
+    return selectedTarget, distance, nearbyCount
+end
+
+local function attackTarget()
+    if not autoAttackBoxes then
+        return
+    end
+
+    if not BoxController
+        or type(boxAreaState) ~= "table"
+        or type(SetTarget) ~= "function"
+        or type(Attack) ~= "function"
     then
-        subscribeField(fieldId)
+        resolveAttackFunctions()
+        return
+    end
+
+    local target, distance, nearbyCount = updateTarget()
+
+    if target and isBoxValid(target) then
+        pcall(Attack)
     end
 
     if os.clock() - lastStatusAt >= 2 then
         lastStatusAt = os.clock()
 
         print(
-            "[Boxes] Field",
-            fieldId,
-            "tracked",
-            countBoxes(fieldId),
-            "nearby",
-            #nearby,
-            "attacked",
-            attacked
+            "[Boxes] Nearby",
+            nearbyCount,
+            "target",
+            target and target.Id or "none",
+            "distance",
+            target and string.format("%.1f", distance) or "-"
         )
     end
 end
 
-task.spawn(function()
-    while not BoxesAPI do
-        task.wait(0.1)
-    end
-
-    initializeBoxListeners()
-end)
-
 MainTab:Toggle("Auto Damage Nearby Boxes", false, function(state)
     autoAttackBoxes = state
 
-    if state then
-        local fieldId = findCurrentField()
-
-        if fieldId ~= nil then
-            currentFieldId = fieldId
-            subscribeField(fieldId)
-        end
-
-        task.spawn(function()
-            while autoAttackBoxes do
-                attackNearbyBoxes()
-                task.wait(attackDelay)
-            end
-        end)
+    if not state then
+        clearTarget()
+        return
     end
+
+    task.spawn(function()
+        while autoAttackBoxes do
+            attackTarget()
+            task.wait(1 / attacksPerSecond)
+        end
+    end)
 end)
 
 MainTab:Slider("Attack Range", 10, 28, 27, function(value)
     attackRange = math.clamp(value, 10, 28)
 end)
 
-MainTab:Slider("Attack Batch Size", 1, 50, 30, function(value)
-    attackBatchSize = math.max(1, math.floor(value))
-end)
-
-MainTab:Slider("Attack Delay (ms)", 50, 2000, 100, function(value)
-    attackDelay = math.max(value / 1000, 0.05)
+MainTab:Slider("Attacks Per Second", 1, 7, 5, function(value)
+    attacksPerSecond = math.clamp(
+        math.floor(value),
+        1,
+        7
+    )
 end)
 
 MainTab:Label("Weapons", "rbxassetid://7733955511")
